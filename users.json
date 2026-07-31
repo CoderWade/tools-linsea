@@ -1,0 +1,13 @@
+{
+  "users": [
+    {
+      "id": "a5f49375-a118-40e7-ae29-aa77e1afb2b4",
+      "email": "admin@timeminer.fun",
+      "name": "Sylvan",
+      "role": "user",
+      "salt": "18839a5ad6427cededa7637fc515f7be",
+      "passwordHash": "23f15a147ef6fa96f3445b917d59c1630ea3025325ba393f25bf96f707f3161f",
+      "createdAt": "2026-07-31T05:27:06.426Z"
+    }
+  ]
+}

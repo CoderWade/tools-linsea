@@ -1,0 +1,9 @@
+{
+  "name": "linsea-tools",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local-first Web3 and developer toolbox prototype.",
+  "scripts": {
+    "dev": "node server.js"
+  }
+}

@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="Linsea Tools: a privacy-first toolbox for Web3 security, developers, commerce operations, and risk testing."
+    />
+    <title>Linsea Tools</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div id="app" class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="brand-mark">L</div>
+          <div>
+            <strong>Linsea Tools</strong>
+            <span>Security workbench</span>
+          </div>
+        </div>
+
+        <nav id="categoryNav" class="category-nav" aria-label="Tool categories"></nav>
+
+        <div class="sidebar-footer">
+          <button id="openAuthSide" class="ghost-button full-width" type="button">
+            Sign in
+          </button>
+          <p class="fine-print">Local-first utilities for serious debugging.</p>
+        </div>
+      </aside>
+
+      <main class="workspace">
+        <header class="topbar">
+          <button id="commandButton" class="command-trigger" type="button">
+            <span>Search tools or actions</span>
+            <kbd>Ctrl K</kbd>
+          </button>
+
+          <div class="topbar-actions">
+            <span id="privacyPill" class="status-pill">Privacy off</span>
+            <button id="languageToggle" class="icon-button" type="button" title="Switch language">
+              EN
+            </button>
+            <button id="themeToggle" class="icon-button" type="button" title="Switch theme">
+              Theme
+            </button>
+            <button id="openAuthTop" class="icon-button" type="button" title="Account">
+              Sign in
+            </button>
+          </div>
+        </header>
+
+        <section class="tool-hero">
+          <div>
+            <div id="toolMeta" class="tool-meta"></div>
+            <h1 id="toolTitle"></h1>
+            <p id="toolDescription"></p>
+          </div>
+          <div id="toolBadges" class="badge-row"></div>
+        </section>
+
+        <section class="workgrid">
+          <div id="toolPanel" class="tool-panel" aria-live="polite"></div>
+
+          <aside class="context-panel">
+            <section class="context-section">
+              <div class="section-heading">
+                <span>Tools</span>
+                <small id="toolCount"></small>
+              </div>
+              <div id="toolList" class="tool-list"></div>
+            </section>
+
+            <section class="context-section">
+              <div class="section-heading">
+                <span>Recent</span>
+                <small>local</small>
+              </div>
+              <div id="recentList" class="recent-list"></div>
+            </section>
+
+            <section id="adSlot" class="ad-slot" aria-label="Advertisement placeholder">
+              <span>Advertisement</span>
+              <strong>Reserved 300 x 250</strong>
+              <small>Disabled in Privacy First Mode</small>
+            </section>
+          </aside>
+        </section>
+      </main>
+    </div>
+
+    <div id="commandOverlay" class="overlay hidden" role="dialog" aria-modal="true">
+      <div class="command-menu">
+        <input
+          id="commandInput"
+          autocomplete="off"
+          spellcheck="false"
+          placeholder="Type slot, json, luhn, cron..."
+        />
+        <div id="commandResults" class="command-results"></div>
+      </div>
+    </div>
+
+    <div id="authOverlay" class="overlay hidden" role="dialog" aria-modal="true">
+      <form id="authForm" class="settings-modal auth-modal">
+        <div class="modal-title">
+          <div>
+            <strong id="authTitle">Sign in</strong>
+            <span id="authSubtitle">Use a local JSON-backed account for this prototype.</span>
+          </div>
+          <button id="closeAuth" class="icon-button" type="button">Close</button>
+        </div>
+
+        <div id="authStatus" class="notice hidden"></div>
+
+        <div id="authFields" class="auth-fields">
+          <label class="field">
+            <span>Name</span>
+            <input id="authName" autocomplete="name" placeholder="Only needed when creating account" />
+          </label>
+
+          <label class="field">
+            <span>Email</span>
+            <input id="authEmail" type="email" autocomplete="email" placeholder="you@example.com" />
+          </label>
+
+          <label class="field">
+            <span>Password</span>
+            <input id="authPassword" type="password" autocomplete="current-password" placeholder="At least 8 characters" />
+          </label>
+        </div>
+
+        <div id="accountFields" class="account-fields hidden">
+          <div class="account-card">
+            <div class="avatar" id="accountAvatar">L</div>
+            <div>
+              <strong id="accountName">Local user</strong>
+              <span id="accountEmail">signed in locally</span>
+            </div>
+          </div>
+
+          <label class="field">
+          <span>Alchemy API Key</span>
+          <input id="alchemyKey" type="password" autocomplete="off" placeholder="Optional BYOK key" />
+          </label>
+
+          <label class="field">
+            <span>Infura API Key</span>
+            <input id="infuraKey" type="password" autocomplete="off" placeholder="Optional BYOK key" />
+          </label>
+
+          <label class="field">
+            <span>Default Chain</span>
+            <select id="defaultChain">
+              <option value="ethereum">Ethereum Mainnet</option>
+              <option value="sepolia">Sepolia</option>
+              <option value="polygon">Polygon</option>
+              <option value="bsc">BNB Smart Chain</option>
+            </select>
+          </label>
+
+          <label class="toggle-row">
+            <span>
+              <strong>Privacy First Mode</strong>
+              <small>Disable third-party requests, ads, RPC proxy, and remote lookups.</small>
+            </span>
+            <input id="privacyMode" type="checkbox" />
+          </label>
+        </div>
+
+        <div class="modal-actions">
+          <button id="authSecondary" class="ghost-button" type="button">Create account</button>
+          <button id="authPrimary" class="primary-button" type="submit">Sign in</button>
+        </div>
+      </form>
+    </div>
+
+    <script src="./app.js" type="module"></script>
+  </body>
+</html>
