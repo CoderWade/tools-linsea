@@ -5,7 +5,7 @@ Local-first prototype for the Linsea Tools workbench.
 ## Run
 
 ```bash
-npm run dev
+python3 -m http.server 4173
 ```
 
 Then open:

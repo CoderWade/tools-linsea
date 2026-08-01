@@ -560,6 +560,18 @@ h1 {
     var(--surface-alt);
 }
 
+.workbench-chain .panel-storage-workbench {
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--blue) 8%, transparent), transparent 44%),
+    var(--surface-alt);
+}
+
+:root[data-theme="light"] .workbench-chain .panel-storage-workbench {
+  background:
+    linear-gradient(180deg, rgba(22, 137, 212, 0.08), rgba(19, 164, 179, 0.035) 48%, transparent),
+    var(--surface);
+}
+
 .workbench-calldata {
   grid-template-columns: minmax(360px, 0.82fr) minmax(460px, 1.18fr);
 }
@@ -606,6 +618,50 @@ h1 {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
   margin-bottom: 12px;
+}
+
+.storage-mode-switch {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  padding: 4px;
+  margin-bottom: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--code-surface);
+}
+
+.storage-mode-button {
+  min-height: 34px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 720;
+}
+
+.storage-mode-button.active {
+  border-color: color-mix(in srgb, var(--blue) 44%, var(--line));
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--blue) 18%, transparent), color-mix(in srgb, var(--cyan) 12%, transparent)),
+    var(--surface);
+  color: var(--blue-strong);
+  box-shadow: var(--shadow-soft);
+}
+
+.storage-common-fields,
+.storage-mode-panel {
+  margin-bottom: 12px;
+}
+
+.storage-mode-panel {
+  display: grid;
+  gap: 10px;
+}
+
+.storage-mode-panel.hidden {
+  display: none;
 }
 
 .storage-card {

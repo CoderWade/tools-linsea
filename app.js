@@ -874,37 +874,86 @@ function detectCardNetwork(number) {
 function renderStorageSlot() {
   setWorkbench("chain");
   elements.toolPanel.innerHTML =
-    panel("Storage query", `<div class="input-grid">
-        <label class="field"><span>Contract address</span><input id="slotContract" class="mono" placeholder="0x..." /></label>
-        <label class="field"><span>Solidity declaration</span><input id="slotDeclaration" class="mono" value="mapping(address => bool) public _feeWhiteList;" /></label>
-        <label class="field"><span>Base slot</span><input id="slotIndex" class="mono" placeholder="known slot, e.g. 3; leave empty to scan mappings" /></label>
-        <label class="field"><span>Mapping key / value key</span><input id="slotKey" class="mono" placeholder="address, uint256, or bytes32 key" /></label>
-        <label class="field"><span>Block tag</span><input id="slotBlock" class="mono" value="latest" /></label>
-        <label class="field"><span>Scan base slots</span><input id="slotScanLimit" class="mono" value="80" /></label>
-        <label class="field"><span>Expected value filter</span><select id="slotExpected"><option value="any">Any value</option><option value="true">bool true / non-zero</option><option value="false">bool false / zero</option></select></label>
-      </div><div class="toolbar">
-        <button id="readStorage" class="primary-button" type="button">Analyze storage</button>
-        <button id="exampleFeeWhiteList" class="ghost-button" type="button">mapping(address=>bool)</button>
-        <button id="exampleChecked" class="ghost-button" type="button">mapping(uint256=>bool)</button>
+    panel("Storage workbench", `<div class="storage-mode-switch" role="tablist" aria-label="Storage mode">
+        <button class="storage-mode-button active" data-storage-mode="raw" type="button">Raw slot read</button>
+        <button class="storage-mode-button" data-storage-mode="mapping" type="button">Mapping probe</button>
       </div>
-      <div class="notice">If the base slot is known, this reads the exact location. If base slot is empty and the declaration is a mapping, it scans candidate base slots with your key. Variable names are not stored on-chain; exact layout still comes from source/storageLayout or a successful scan with a known key.</div>`) +
-    panel("Analysis", `<div id="slotOutput"></div>`);
-  ["#slotIndex", "#slotKey", "#slotDeclaration", "#slotScanLimit", "#slotExpected"].forEach((s) => $(s).addEventListener("input", updateStorageSlot));
-  $("#slotExpected").addEventListener("change", updateStorageSlot);
+      <div class="input-grid storage-common-fields">
+        <label class="field"><span>Contract address</span><input id="slotContract" class="mono" placeholder="0x..." /></label>
+        <label class="field"><span>Block tag</span><input id="slotBlock" class="mono" value="latest" /></label>
+      </div>
+      <div id="rawSlotFields" class="storage-mode-panel">
+        <div class="input-grid">
+          <label class="field"><span>Slot index</span><input id="rawSlotIndex" class="mono" placeholder="23 or 0x17" /></label>
+          <label class="field"><span>Decode focus</span><select id="rawDecodeType">
+            <option value="bytes32">bytes32</option>
+            <option value="bool">bool</option>
+            <option value="uint256">uint256</option>
+            <option value="int256">int256</option>
+            <option value="address">address</option>
+          </select></label>
+        </div>
+        <div class="notice">Use this for the exact workflow: contract address + slot index -> <code>eth_getStorageAt</code>. For example, slot <code>23</code> is read directly as slot <code>0x17</code>, not as a mapping base slot.</div>
+      </div>
+      <div id="mappingSlotFields" class="storage-mode-panel hidden">
+        <div class="input-grid">
+          <label class="field"><span>Mapping declaration</span><input id="slotDeclaration" class="mono" placeholder="mapping(uint256 => bool) public flags;" /></label>
+          <label class="field"><span>Mapping key</span><input id="slotKey" class="mono" placeholder="20666, 0xabc..., or bytes32" /></label>
+          <label class="field"><span>Known base slot</span><input id="slotBaseIndex" class="mono" placeholder="optional: 3 or 0x03" /></label>
+          <label class="field"><span>Scan candidate base slots</span><input id="slotScanLimit" class="mono" value="80" /></label>
+          <label class="field"><span>Scan filter</span><select id="slotExpected"><option value="nonzero">non-zero / bool true</option><option value="any">return every scanned value</option></select></label>
+        </div>
+        <div class="notice warn">Solidity variable names are not stored on-chain. Without source/storageLayout, a blank base slot can only scan candidates and report evidence. A false/zero mapping value cannot prove the base slot, because empty storage is also zero.</div>
+      </div>
+      <div class="toolbar"><button id="readStorage" class="primary-button" type="button">Read storage</button></div>`) +
+    panel("Readout", `<div id="slotOutput"></div>`);
+  document.querySelectorAll("[data-storage-mode]").forEach((button) => button.addEventListener("click", () => setStorageMode(button.dataset.storageMode)));
+  ["#rawSlotIndex", "#rawDecodeType", "#slotDeclaration", "#slotKey", "#slotBaseIndex", "#slotScanLimit", "#slotExpected", "#slotBlock"].forEach((s) => $(s).addEventListener("input", updateStorageSlot));
+  ["#rawDecodeType", "#slotExpected"].forEach((s) => $(s).addEventListener("change", updateStorageSlot));
   $("#readStorage").addEventListener("click", readStorageSlot);
-  $("#exampleFeeWhiteList").addEventListener("click", () => setStorageExample("mapping(address => bool) public _feeWhiteList;", "0x000000000000000000000000000000000000dEaD"));
-  $("#exampleChecked").addEventListener("click", () => setStorageExample("mapping(uint256 => bool) public _isChecked;", "1"));
   updateStorageSlot();
 }
 
+function setStorageMode(mode) {
+  document.querySelectorAll("[data-storage-mode]").forEach((button) => button.classList.toggle("active", button.dataset.storageMode === mode));
+  $("#rawSlotFields").classList.toggle("hidden", mode !== "raw");
+  $("#mappingSlotFields").classList.toggle("hidden", mode !== "mapping");
+  updateStorageSlot();
+}
+
+function currentStorageMode() {
+  return document.querySelector("[data-storage-mode].active")?.dataset.storageMode || "raw";
+}
+
 function updateStorageSlot() {
-  const declaration = $("#slotDeclaration").value.trim();
-  const layout = parseStorageDeclaration(declaration);
-  const index = $("#slotIndex").value.trim();
-  const key = $("#slotKey").value.trim();
   const out = $("#slotOutput");
   try {
-    const rows = storagePlanRows(layout, index, key);
+    if (currentStorageMode() === "raw") {
+      const slot = $("#rawSlotIndex").value.trim();
+      if (!slot) {
+        out.innerHTML = `<div class="notice">Enter a contract address and a slot index to read the exact 32-byte storage word.</div>`;
+        return;
+      }
+      const query = rawSlotQuery(slot);
+      out.innerHTML = storageRawSummary(query) + resultRows([
+        ["Mode", "Direct eth_getStorageAt"],
+        ["Slot index", query.indexText],
+        ["Slot hex", query.storageSlot],
+        ["Decode focus", $("#rawDecodeType").value],
+      ]);
+      bindCopyButtons(out);
+      return;
+    }
+    const declaration = $("#slotDeclaration").value.trim();
+    const key = $("#slotKey").value.trim();
+    const baseSlot = $("#slotBaseIndex").value.trim();
+    if (!declaration) {
+      out.innerHTML = `<div class="notice">Enter a mapping declaration such as <code>mapping(uint256 => bool) public flags;</code>. The name is only documentation; key/value types drive the calculation.</div>`;
+      return;
+    }
+    const layout = parseStorageDeclaration(declaration);
+    if (layout.kind !== "mapping") throw new Error("Mapping probe needs a mapping(...) declaration.");
+    const rows = storagePlanRows(layout, baseSlot, key);
     out.innerHTML = storageLayoutSummary(layout) + resultRows(rows);
     bindCopyButtons(out);
   } catch (error) { out.innerHTML = `<div class="notice danger">${escapeHtml(error.message)}</div>`; }
@@ -912,10 +961,6 @@ function updateStorageSlot() {
 
 async function readStorageSlot() {
   const contract = $("#slotContract").value.trim();
-  const declaration = $("#slotDeclaration").value.trim();
-  const layout = parseStorageDeclaration(declaration);
-  const index = $("#slotIndex").value.trim();
-  const key = $("#slotKey").value.trim();
   const blockTag = $("#slotBlock").value.trim() || "latest";
   const out = $("#slotOutput");
   if (!/^0x[a-fA-F0-9]{40}$/.test(contract)) { out.innerHTML = `<div class="notice danger">Enter a valid 20-byte contract address.</div>`; return; }
@@ -924,24 +969,30 @@ async function readStorageSlot() {
   const endpoint = rpcEndpoint();
   if (!endpoint) { out.innerHTML = `<div class="notice">Add an Alchemy or Infura API key in Settings before reading contract storage.</div>`; return; }
   try {
-    if (layout.kind === "mapping" && !index) {
+    if (currentStorageMode() === "raw") {
+      const query = rawSlotQuery($("#rawSlotIndex").value.trim());
+      out.innerHTML = `<div class="notice">Reading slot <code>${escapeHtml(query.storageSlot)}</code>...</div>`;
+      const rawValue = await rpcRequest(endpoint, "eth_getStorageAt", [contract, query.storageSlot, blockTag]);
+      out.innerHTML = rawStorageReadView(query, rawValue, $("#rawDecodeType").value, [["Contract", contract], ["Block tag", blockTag]]);
+      bindCopyButtons(out);
+      return;
+    }
+    const declaration = $("#slotDeclaration").value.trim();
+    if (!declaration) throw new Error("Enter a mapping declaration before probing.");
+    const layout = parseStorageDeclaration(declaration);
+    if (layout.kind !== "mapping") throw new Error("Mapping probe needs a mapping(...) declaration.");
+    const key = $("#slotKey").value.trim();
+    const baseSlot = $("#slotBaseIndex").value.trim();
+    if (!baseSlot) {
       await scanMappingBaseSlots(endpoint, contract, layout, key, blockTag, out);
       return;
     }
-    if (!index) throw new Error("Enter a base slot, or use a mapping declaration with a key to scan candidate slots.");
-    const query = storageQueryFromLayout(layout, index, key);
-    out.innerHTML = `<div class="notice">Reading <code>${escapeHtml(query.storageSlot)}</code>...</div>`;
+    const query = storageQueryFromLayout(layout, baseSlot, key);
+    out.innerHTML = `<div class="notice">Reading mapping value slot <code>${escapeHtml(query.storageSlot)}</code>...</div>`;
     const rawValue = await rpcRequest(endpoint, "eth_getStorageAt", [contract, query.storageSlot, blockTag]);
     out.innerHTML = storageReadView(layout, query, rawValue, [["Contract", contract], ["Block tag", blockTag]]);
     bindCopyButtons(out);
   } catch (error) { out.innerHTML = `<div class="notice danger">${escapeHtml(error.message || "Storage read failed.")}</div>`; }
-}
-
-function setStorageExample(declaration, key) {
-  $("#slotDeclaration").value = declaration;
-  $("#slotKey").value = key;
-  $("#slotIndex").value = "";
-  updateStorageSlot();
 }
 
 function parseStorageDeclaration(input) {
@@ -957,12 +1008,38 @@ function normalizeSolidityType(type) {
   return type.trim().replace(/\s/g, "").replace(/^uint$/, "uint256").replace(/^int$/, "int256");
 }
 
+function parseSlotIndex(value, label = "Slot") {
+  const input = String(value || "").trim();
+  if (!input) throw new Error(`${label} is required.`);
+  if (!/^(0x[a-fA-F0-9]+|\d+)$/.test(input)) throw new Error(`${label} must be a decimal number or 0x hex value.`);
+  const parsed = BigInt(input);
+  if (parsed < 0n || parsed >= (1n << 256n)) throw new Error(`${label} must fit in uint256.`);
+  return parsed;
+}
+
+function toSlotHex(value) {
+  const slot = typeof value === "bigint" ? value : parseSlotIndex(value);
+  return `0x${slot.toString(16).padStart(64, "0")}`;
+}
+
+function rawSlotQuery(index) {
+  const slot = parseSlotIndex(index, "Slot index");
+  return { indexText: index.trim(), slotNumber: slot, storageSlot: toSlotHex(slot), formula: "direct slot read" };
+}
+
 function storageLayoutSummary(layout) {
   const body = layout.kind === "mapping"
-    ? `<div class="storage-card"><span>Variable</span><strong>${escapeHtml(layout.name)}</strong><small>mapping key: ${escapeHtml(layout.keyType)} | value: ${escapeHtml(layout.valueType)}</small></div>
-       <div class="storage-card"><span>How mapping stores data</span><strong>base slot is empty</strong><small>each value is at keccak256(abi.encode(key, baseSlot))</small></div>`
+    ? `<div class="storage-card"><span>Parsed mapping</span><strong>${escapeHtml(layout.name)}</strong><small>key: ${escapeHtml(layout.keyType)} | value: ${escapeHtml(layout.valueType)}</small></div>
+       <div class="storage-card"><span>Value location</span><strong>keccak256(key, baseSlot)</strong><small>mapping values live in hashed slots, not at the key number itself</small></div>`
     : `<div class="storage-card"><span>Variable</span><strong>${escapeHtml(layout.name)}</strong><small>stored as ${escapeHtml(layout.valueType)} in the selected slot</small></div>`;
   return `<div class="storage-summary">${body}</div>`;
+}
+
+function storageRawSummary(query) {
+  return `<div class="storage-summary">
+    <div class="storage-card"><span>Raw slot</span><strong>${escapeHtml(query.indexText)}</strong><small>direct slot index supplied by you</small></div>
+    <div class="storage-card"><span>RPC method</span><strong>eth_getStorageAt</strong><small>reads exactly one bytes32 storage word</small></div>
+  </div>`;
 }
 
 function storagePlanRows(layout, index, key) {
@@ -971,10 +1048,11 @@ function storagePlanRows(layout, index, key) {
     rows.push(["Mode", "Scan candidate base slots"]);
     rows.push(["Required key", key || "enter an address/uint/bytes32 key"]);
     rows.push(["Scan range", `0 to ${Number($("#slotScanLimit")?.value || 80)}`]);
+    rows.push(["Important limit", "zero/false cannot prove a mapping base slot"]);
     return rows;
   }
   if (!index) {
-    rows.push(["Mode", "Enter base slot to calculate exact location"]);
+    rows.push(["Mode", "Enter base slot to calculate exact mapping value slot"]);
     return rows;
   }
   const query = storageQueryFromLayout(layout, index, key);
@@ -986,8 +1064,8 @@ function storagePlanRows(layout, index, key) {
 }
 
 function storageQueryFromLayout(layout, index, key) {
-  const baseSlot = BigInt(index || "0");
-  const baseSlotHex = `0x${baseSlot.toString(16).padStart(64, "0")}`;
+  const baseSlot = parseSlotIndex(index || "0", "Base slot");
+  const baseSlotHex = toSlotHex(baseSlot);
   if (layout.kind === "mapping") {
     if (!key) throw new Error("Enter a mapping key to calculate/read a mapping value.");
     return {
@@ -1012,7 +1090,7 @@ function normalizeAbiWordByType(value, type) {
     return input.slice(2).toLowerCase().padStart(64, "0");
   }
   if (/^u?int\d{0,3}$/.test(type)) {
-    if (!/^\d+$/.test(input)) throw new Error(`Mapping key type is ${type}; enter a decimal integer.`);
+    if (!/^(0x[a-fA-F0-9]+|\d+)$/.test(input)) throw new Error(`Mapping key type is ${type}; enter a decimal integer or 0x hex integer.`);
     return BigInt(input).toString(16).padStart(64, "0");
   }
   if (type === "bool") {
@@ -1062,12 +1140,27 @@ function storageReadView(layout, query, rawValue, prefixRows = []) {
   ]);
 }
 
+function rawStorageReadView(query, rawValue, decodeType, prefixRows = []) {
+  const focused = decodeStorageValue(rawValue, decodeType);
+  return storageRawSummary(query) + resultRows([
+    ...prefixRows,
+    ["Slot index", query.indexText],
+    ["Slot hex", query.storageSlot],
+    ["Formula", query.formula],
+    ["Raw bytes32", rawValue],
+    [`Decoded ${decodeType}`, focused],
+    ["uint256 view", BigInt(rawValue).toString()],
+    ["bool view", decodeStorageValue(rawValue, "bool")],
+    ["address view", storageAddress(rawValue) || "0x0000000000000000000000000000000000000000"],
+  ]);
+}
+
 async function scanMappingBaseSlots(endpoint, contract, layout, key, blockTag, out) {
   if (!key) throw new Error("Enter a mapping key. Scanning requires a concrete key whose value you want to inspect.");
   const maxSlot = Number($("#slotScanLimit").value || "80");
   if (!Number.isInteger(maxSlot) || maxSlot < 0 || maxSlot > 500) throw new Error("Scan range must be 0 to 500.");
   const expected = $("#slotExpected").value;
-  out.innerHTML = `<div class="notice">Scanning mapping base slots 0 to ${maxSlot} for <code>${escapeHtml(layout.name)}</code>...</div>`;
+  out.innerHTML = `<div class="notice">Scanning candidate base slots 0 to ${maxSlot} for key <code>${escapeHtml(key)}</code>...</div>`;
   const matches = [];
   for (let slot = 0; slot <= maxSlot; slot += 1) {
     const query = storageQueryFromLayout(layout, String(slot), key);
@@ -1075,7 +1168,7 @@ async function scanMappingBaseSlots(endpoint, contract, layout, key, blockTag, o
     if (storageScanMatches(rawValue, expected)) matches.push({ slot, query, rawValue });
   }
   if (!matches.length) {
-    out.innerHTML = storageLayoutSummary(layout) + `<div class="notice warn">No candidate matched the filter in base slots 0 to ${maxSlot}. Try a larger range, a different key, or confirm the contract source/storage layout.</div>`;
+    out.innerHTML = storageLayoutSummary(layout) + `<div class="notice warn">No non-zero candidate was found in base slots 0 to ${maxSlot}. If the value is false/zero, scanning cannot distinguish it from unset storage. Use source/storageLayout or a key known to return true/non-zero.</div>`;
     return;
   }
   out.innerHTML = storageLayoutSummary(layout) +
@@ -1084,14 +1177,13 @@ async function scanMappingBaseSlots(endpoint, contract, layout, key, blockTag, o
       <code>${escapeHtml(match.query.storageSlot)}<br/>raw=${escapeHtml(match.rawValue)}<br/>decoded=${escapeHtml(decodeStorageValue(match.rawValue, layout.valueType))}</code>
       ${copyButton(match.query.storageSlot)}
     </div>`).join("")}</div>` +
-    `<div class="selector-caution">A scan is evidence, not proof. If many zero values match, use an expected true/non-zero key or verify with Solidity storageLayout.</div>`;
+    `<div class="selector-caution">A scan is evidence, not proof. Confirm candidates with source code, compiler storageLayout, or multiple keys whose expected values you know.</div>`;
   bindCopyButtons(out);
 }
 
 function storageScanMatches(rawValue, expected) {
   const value = BigInt(rawValue);
-  if (expected === "true") return value !== 0n;
-  if (expected === "false") return value === 0n;
+  if (expected === "any") return true;
   return value !== 0n;
 }
 
