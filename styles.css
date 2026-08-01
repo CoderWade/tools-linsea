@@ -554,6 +554,12 @@ h1 {
   grid-template-columns: minmax(330px, 0.88fr) minmax(430px, 1.12fr);
 }
 
+.workbench-chain .panel-storage-query {
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--cyan) 7%, transparent), transparent 46%),
+    var(--surface-alt);
+}
+
 .workbench-calldata {
   grid-template-columns: minmax(360px, 0.82fr) minmax(460px, 1.18fr);
 }
@@ -593,6 +599,46 @@ h1 {
 
 .text-compare-inputs textarea {
   min-height: 300px;
+}
+
+.storage-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.storage-card {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  padding: 11px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+
+.storage-card span {
+  color: var(--faint);
+  font-size: 10px;
+  font-weight: 740;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.storage-card strong {
+  min-width: 0;
+  color: var(--blue-strong);
+  font-size: 15px;
+  overflow-wrap: anywhere;
+}
+
+.storage-card small {
+  color: var(--muted);
+}
+
+.storage-candidate code {
+  line-height: 1.55;
 }
 
 .field {
@@ -1302,7 +1348,8 @@ pre.notice {
 
   .timestamp-fields,
   .text-compare-inputs,
-  .metric-strip {
+  .metric-strip,
+  .storage-summary {
     grid-template-columns: 1fr;
   }
 
