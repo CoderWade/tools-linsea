@@ -14,7 +14,7 @@ Linsea Tools 是一个面向 Web3 逆向安全、通用开发、跨境运营与�
 ## 2. 目标用户
 
 - Web3 安全研究员：需要快速查看 storage slot、代理实现地址、calldata、bytecode、selector。
-- Solidity / 后端 / 全栈开发者：需要 JSON、时间戳、正则、Cron、Hash、编码转换等日常工具。
+- Solidity / 后端 / 全栈开发者：需要 JSON、时间戳、文本对比、Hash、编码转换等日常工具。
 - 跨境运营人员：需要利润测算、文本清洗、白底图处理、物流查询入口。
 - 支付与风控测试人员：需要 Luhn 校验、BIN 查询与合规 sandbox 卡号生成。
 
@@ -56,17 +56,16 @@ Linsea Tools 是一个面向 Web3 逆向安全、通用开发、跨境运营与�
 
 #### 5.1.1 Storage Slot Inspector
 
-目标：查看与计算 EVM 合约存储槽，辅助分析 Solidity storage layout。
+目标：查看与计算 EVM 合约存储槽，专注于原始 slot 读取与 mapping 定位。
 
 核心功能：
 
 - 标准 slot 计算：输入 slot index，输出 32-byte slot key。
 - mapping slot 计算：输入 key、value type、base slot，计算 `keccak256(abi.encode(key, slot))`。
-- nested mapping 计算：支持多层 key 链式计算。
-- array / dynamic bytes / string slot 提示：展示动态数组与长字符串的 slot 计算方式。
 - 地址、uint、bytes32、bool 等常见类型输入校验。
 - 支持调用 `eth_getStorageAt` 读取链上值。
 - 输出原始 hex、uint256、address、bool、bytes32 多种解释视图。
+- constant / immutable 明确提示：不占用 storage slot。
 
 联网策略：
 
@@ -74,7 +73,27 @@ Linsea Tools 是一个面向 Web3 逆向安全、通用开发、跨境运营与�
 - 用户配置 BYOK 时，前端可直接请求用户自己的 Alchemy / Infura endpoint。
 - 纯本地模式开启时，只允许计算 slot，不发起 RPC 请求。
 
-#### 5.1.2 Proxy Slot Finder
+#### 5.1.2 Source Layout Resolver
+
+目标：把已验证源码或反编译源码中的状态变量、getter 名解析成 storage slot / byte offset。
+
+核心功能：
+
+- 支持粘贴 verified Solidity source。
+- 支持粘贴 Dedaub 反编译源码。
+- 支持 `storageLayout` JSON 作为精确输入。
+- 输入状态变量名或 getter 名，定位其对应 slot。
+- 对 mapping 支持 key -> value slot 推导。
+- 对 constant / immutable 明确提示为不占用 storage slot。
+- 输出变量名、类型、slot、offset 与读槽建议。
+
+说明：
+
+- 已验证合约优先贴源码。
+- 未验证合约可贴反编译结果做 best-effort 解析。
+- 解析完成后，再回到 Storage Slot Inspector 读取链上原始值。
+
+#### 5.1.3 Proxy Slot Finder
 
 目标：一键探测代理合约实现地址。
 
@@ -98,7 +117,7 @@ Linsea Tools 是一个面向 Web3 逆向安全、通用开发、跨境运营与�
 - 探测置信度。
 - 风险提示：implementation 为 0、admin 异常、beacon 不可读、合约无代码等。
 
-#### 5.1.3 Calldata Decoder
+#### 5.1.4 Calldata Decoder
 
 目标：解析原始 calldata，识别 selector 并尽量还原函数参数。
 
@@ -117,7 +136,7 @@ Linsea Tools 是一个面向 Web3 逆向安全、通用开发、跨境运营与�
 - 纯本地模式开启时，不查询 OpenChain / 4byte。
 - 用户粘贴的 calldata 不自动上传，必须由用户触发“查询签名”。
 
-#### 5.1.4 Unit Converter
+#### 5.1.5 Unit Converter
 
 目标：高精度转换 Wei / Gwei / Ether / Token Decimals。
 
@@ -128,24 +147,6 @@ Linsea Tools 是一个面向 Web3 逆向安全、通用开发、跨境运营与�
 - 大数精度安全，禁止 JS 浮点误差污染。
 - 常用 decimals 快捷项：6、8、9、18。
 - 输出科学计数法、完整数字、格式化小数。
-
-#### 5.1.5 EVM Bytecode Disassembler
-
-目标：将 EVM bytecode 转换为 opcode 反汇编结果。
-
-核心功能：
-
-- 输入 runtime bytecode / creation bytecode。
-- 逐行展示 PC、Opcode、Push Data、Gas Hint。
-- 高亮 PUSH、JUMP、CALL、DELEGATECALL、SELFDESTRUCT 等关键指令。
-- 检测 CBOR metadata 并提示 Solidity 编译器 metadata 区域。
-- 支持搜索 opcode。
-- 支持导出为文本。
-
-实现建议：
-
-- MVP 可先使用前端 TypeScript parser 本地执行。
-- 后续如需要更强性能或复用成熟解析器，再引入 WASM。
 
 #### 5.1.6 4Byte / Selector Finder
 
@@ -249,31 +250,17 @@ Linsea Tools 是一个面向 Web3 逆向安全、通用开发、跨境运营与�
 - 常见格式输出：ISO 8601、RFC 3339、SQL datetime。
 - 区块时间估算：按链平均出块时间推算近似 block height。
 
-#### 5.2.3 Regex Lab
+#### 5.2.3 Text Compare
 
-目标：正则表达式测试、解释与模板管理。
-
-核心功能：
-
-- 实时匹配高亮。
-- 捕获组列表。
-- flags 切换。
-- 常用模板库：邮箱、URL、IPv4、UUID、钱包地址、Tx Hash。
-- 正则解释。
-- Regulex 风格语法树可视化。
-
-#### 5.2.4 Cron Master
-
-目标：Cron 表达式生成、解释与未来触发时间预览。
+目标：并排对比两段文本并突出差异。
 
 核心功能：
 
-- 可视化选择分钟、小时、日期、月份、星期。
-- 反向解析 Cron。
-- 未来 10 次触发时间。
-- 时区选择。
-- 支持 5-field Unix Cron。
-- 后续支持 Quartz 6/7-field Cron。
+- 左右输入对比。
+- 行级 diff。
+- 插入、删除、修改高亮。
+- 统一格式化后再比对。
+- 复制差异结果。
 
 ### 5.3 跨境运营
 
@@ -700,7 +687,7 @@ Cookie / Consent：
 
 页面策略：
 
-- 每个工具拥有独立 URL：`/tools/storage-slot-inspector`。
+- 每个工具拥有独立 URL，例如：`/tools/storage-slot-inspector`、`/tools/source-layout-resolver`、`/tools/text-compare`。
 - 支持 query 参数预填非敏感示例。
 - 生成 OpenGraph 标题与描述。
 - 文档页提供工具解释与示例。
@@ -724,7 +711,8 @@ Cookie / Consent：
 - JWT Inspector。
 - JSON Studio。
 - Timestamp Pro。
-- Cron Master。
+- Text Compare。
+- Source Layout Resolver。
 - 4Byte / Selector Finder 的本地生成能力。
 - Storage Slot Inspector 的本地计算能力。
 - Card Luhn 校验。
@@ -735,18 +723,16 @@ Cookie / Consent：
 - Proxy Slot Finder。
 - Storage Slot Inspector 链上读取。
 - Calldata Decoder + 远程 selector 查询。
-- Regex Lab。
 - Card BIN 查询。
 - FBA Calculator。
 - Listing Text Cleaner。
+- Source Layout Resolver 的源码映射增强。
 
 第三阶段：
 
-- Bytecode Disassembler。
 - Product Pure White BG。
 - Global Shipping Tracker。
 - 高级 JSON diff。
-- Regex AST 可视化。
 - 多链支持。
 
 ## 14. 验收标准
@@ -784,7 +770,7 @@ Cookie / Consent：
 ## 15. 风险与修正建议
 
 - DES 不应作为推荐加密算法，仅作为兼容解密工具展示。
-- Bytecode Disassembler 不必强制 WASM，MVP 用 TypeScript 本地解析更轻。
+- Source Layout Resolver 的解析成功率需要持续验证。
 - Calldata Decoder 的远程签名查询可能泄露业务行为，应受隐私模式约束。
 - Card 工具必须强调 sandbox 与测试用途，不提供真实可用卡生成。
 - Product Pure White BG 若追求稳定商用品质，纯前端方案可能不足，需要预留服务端或第三方接口。
@@ -796,18 +782,17 @@ Cookie / Consent：
 ```text
 /[locale]
 /[locale]/tools/storage-slot-inspector
+/[locale]/tools/source-layout-resolver
 /[locale]/tools/proxy-slot-finder
 /[locale]/tools/calldata-decoder
 /[locale]/tools/unit-converter
-/[locale]/tools/evm-bytecode-disassembler
 /[locale]/tools/selector-finder
 /[locale]/tools/hash-suite
 /[locale]/tools/symmetric-encryption
 /[locale]/tools/jwt-inspector
 /[locale]/tools/json-studio
 /[locale]/tools/timestamp-pro
-/[locale]/tools/regex-lab
-/[locale]/tools/cron-master
+/[locale]/tools/text-compare
 /[locale]/tools/fba-landed-cost
 /[locale]/tools/listing-text-cleaner
 /[locale]/tools/product-white-bg

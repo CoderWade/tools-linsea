@@ -14,10 +14,20 @@ const tools = [
     category: "reverse",
     name: "Storage Slot Inspector",
     zh: "存储槽检查器",
-    description: "Calculate EVM storage keys and read raw contract storage through an optional read-only RPC.",
+    description: "Read raw storage slots and probe mapping keys through an optional read-only RPC.",
     keywords: ["slot", "storage", "mapping", "erc1967", "solidity"],
-    badges: ["Local first", "RPC optional"],
+    badges: ["Raw read", "Mapping probe"],
     renderer: renderStorageSlot,
+  },
+  {
+    id: "source-layout",
+    category: "reverse",
+    name: "Source Layout Resolver",
+    zh: "源码槽位解析器",
+    description: "Paste verified or decompiled source to resolve Solidity names into storage slots.",
+    keywords: ["layout", "source", "decompiled", "verified", "slot", "solidity"],
+    badges: ["Local first", "Layout aware"],
+    renderer: renderSourceLayoutResolver,
   },
   {
     id: "proxy-slot",
@@ -914,6 +924,56 @@ function renderStorageSlot() {
   updateStorageSlot();
 }
 
+function renderSourceLayoutResolver() {
+  setWorkbench("chain");
+  elements.toolPanel.innerHTML =
+    panel("Source layout", `<div class="storage-mode-switch" role="tablist" aria-label="Source mode">
+        <button class="storage-mode-button active" data-source-mode="verified" type="button">Paste verified source</button>
+        <button class="storage-mode-button" data-source-mode="decompiled" type="button">Paste decompiled</button>
+      </div>
+      <div class="input-grid storage-common-fields">
+        <label class="field"><span>Target name</span><input id="sourceTargetName" class="mono" placeholder="totalSupply, _feeWhiteList, owner" /></label>
+        <label class="field"><span>Contract name (optional)</span><input id="sourceContractName" class="mono" placeholder="auto: most-derived contract" /></label>
+        <label class="field"><span>Mapping key (optional)</span><input id="sourceTargetKey" class="mono" placeholder="only for mapping values" /></label>
+      </div>
+      <label class="field"><span id="sourceInputLabel">Verified source</span><textarea id="sourceInput" class="mono" placeholder="Paste verified Solidity source here."></textarea></label>
+      <div class="notice">This page resolves a variable or getter name into a slot. Verified source is exact; decompiled source is best-effort. It does not read chain data. Use Storage Slot Inspector afterward to read the slot value.</div>`) +
+    panel("Readout", `<div id="sourceOutput"></div>`);
+  document.querySelectorAll("[data-source-mode]").forEach((button) => button.addEventListener("click", () => setSourceMode(button.dataset.sourceMode)));
+  ["#sourceInput", "#sourceTargetName", "#sourceContractName", "#sourceTargetKey"].forEach((selector) => $(selector).addEventListener("input", updateSourceLayoutResolver));
+  updateSourceLayoutResolver();
+}
+
+function setSourceMode(mode) {
+  document.querySelectorAll("[data-source-mode]").forEach((button) => button.classList.toggle("active", button.dataset.sourceMode === mode));
+  $("#sourceInputLabel").textContent = mode === "verified" ? "Verified source" : "Decompiled source";
+  $("#sourceInput").placeholder = mode === "verified"
+    ? "Paste verified Solidity source here."
+    : "Paste Dedaub decompiled source here.";
+  updateSourceLayoutResolver();
+}
+
+function currentSourceMode() {
+  return document.querySelector("[data-source-mode].active")?.dataset.sourceMode || "verified";
+}
+
+function updateSourceLayoutResolver() {
+  const out = $("#sourceOutput");
+  const source = $("#sourceInput").value.trim();
+  if (!source) {
+    out.innerHTML = `<div class="notice">Paste source or decompiled output to resolve storage slots.</div>`;
+    return;
+  }
+  try {
+    const layout = resolveSourceLayoutText(currentSourceMode(), source, $("#sourceContractName").value.trim());
+    const report = resolveStorageName(layout, $("#sourceTargetName").value.trim(), $("#sourceTargetKey").value.trim());
+    out.innerHTML = report.html;
+    bindCopyButtons(out);
+  } catch (error) {
+    out.innerHTML = `<div class="notice danger">${escapeHtml(error.message)}</div>`;
+  }
+}
+
 function setStorageMode(mode) {
   document.querySelectorAll("[data-storage-mode]").forEach((button) => button.classList.toggle("active", button.dataset.storageMode === mode));
   $("#rawSlotFields").classList.toggle("hidden", mode !== "raw");
@@ -928,7 +988,8 @@ function currentStorageMode() {
 function updateStorageSlot() {
   const out = $("#slotOutput");
   try {
-    if (currentStorageMode() === "raw") {
+    const mode = currentStorageMode();
+    if (mode === "raw") {
       const slot = $("#rawSlotIndex").value.trim();
       if (!slot) {
         out.innerHTML = `<div class="notice">Enter a contract address and a slot index to read the exact 32-byte storage word.</div>`;
@@ -944,18 +1005,22 @@ function updateStorageSlot() {
       bindCopyButtons(out);
       return;
     }
-    const declaration = $("#slotDeclaration").value.trim();
-    const key = $("#slotKey").value.trim();
-    const baseSlot = $("#slotBaseIndex").value.trim();
-    if (!declaration) {
-      out.innerHTML = `<div class="notice">Enter a mapping declaration such as <code>mapping(uint256 => bool) public flags;</code>. The name is only documentation; key/value types drive the calculation.</div>`;
+    if (mode === "mapping") {
+      const declaration = $("#slotDeclaration").value.trim();
+      const key = $("#slotKey").value.trim();
+      const baseSlot = $("#slotBaseIndex").value.trim();
+      if (!declaration) {
+        out.innerHTML = `<div class="notice">Enter a mapping declaration such as <code>mapping(uint256 => bool) public flags;</code>. The name is only documentation; key/value types drive the calculation.</div>`;
+        return;
+      }
+      const layout = parseStorageDeclaration(declaration);
+      if (layout.kind !== "mapping") throw new Error("Mapping probe needs a mapping(...) declaration.");
+      const rows = storagePlanRows(layout, baseSlot, key);
+      out.innerHTML = storageLayoutSummary(layout) + resultRows(rows);
+      bindCopyButtons(out);
       return;
     }
-    const layout = parseStorageDeclaration(declaration);
-    if (layout.kind !== "mapping") throw new Error("Mapping probe needs a mapping(...) declaration.");
-    const rows = storagePlanRows(layout, baseSlot, key);
-    out.innerHTML = storageLayoutSummary(layout) + resultRows(rows);
-    bindCopyButtons(out);
+    throw new Error("Unsupported storage mode.");
   } catch (error) { out.innerHTML = `<div class="notice danger">${escapeHtml(error.message)}</div>`; }
 }
 
@@ -969,7 +1034,8 @@ async function readStorageSlot() {
   const endpoint = rpcEndpoint();
   if (!endpoint) { out.innerHTML = `<div class="notice">Add an Alchemy or Infura API key in Settings before reading contract storage.</div>`; return; }
   try {
-    if (currentStorageMode() === "raw") {
+    const mode = currentStorageMode();
+    if (mode === "raw") {
       const query = rawSlotQuery($("#rawSlotIndex").value.trim());
       out.innerHTML = `<div class="notice">Reading slot <code>${escapeHtml(query.storageSlot)}</code>...</div>`;
       const rawValue = await rpcRequest(endpoint, "eth_getStorageAt", [contract, query.storageSlot, blockTag]);
@@ -977,31 +1043,669 @@ async function readStorageSlot() {
       bindCopyButtons(out);
       return;
     }
-    const declaration = $("#slotDeclaration").value.trim();
-    if (!declaration) throw new Error("Enter a mapping declaration before probing.");
-    const layout = parseStorageDeclaration(declaration);
-    if (layout.kind !== "mapping") throw new Error("Mapping probe needs a mapping(...) declaration.");
-    const key = $("#slotKey").value.trim();
-    const baseSlot = $("#slotBaseIndex").value.trim();
-    if (!baseSlot) {
-      await scanMappingBaseSlots(endpoint, contract, layout, key, blockTag, out);
+    if (mode === "mapping") {
+      const declaration = $("#slotDeclaration").value.trim();
+      if (!declaration) throw new Error("Enter a mapping declaration before probing.");
+      const layout = parseStorageDeclaration(declaration);
+      if (layout.kind !== "mapping") throw new Error("Mapping probe needs a mapping(...) declaration.");
+      const key = $("#slotKey").value.trim();
+      const baseSlot = $("#slotBaseIndex").value.trim();
+      if (!baseSlot) {
+        await scanMappingBaseSlots(endpoint, contract, layout, key, blockTag, out);
+        return;
+      }
+      const query = storageQueryFromLayout(layout, baseSlot, key);
+      out.innerHTML = `<div class="notice">Reading mapping value slot <code>${escapeHtml(query.storageSlot)}</code>...</div>`;
+      const rawValue = await rpcRequest(endpoint, "eth_getStorageAt", [contract, query.storageSlot, blockTag]);
+      out.innerHTML = storageReadView(layout, query, rawValue, [["Contract", contract], ["Block tag", blockTag]]);
+      bindCopyButtons(out);
       return;
     }
-    const query = storageQueryFromLayout(layout, baseSlot, key);
-    out.innerHTML = `<div class="notice">Reading mapping value slot <code>${escapeHtml(query.storageSlot)}</code>...</div>`;
-    const rawValue = await rpcRequest(endpoint, "eth_getStorageAt", [contract, query.storageSlot, blockTag]);
-    out.innerHTML = storageReadView(layout, query, rawValue, [["Contract", contract], ["Block tag", blockTag]]);
-    bindCopyButtons(out);
+    throw new Error("Unsupported storage mode.");
   } catch (error) { out.innerHTML = `<div class="notice danger">${escapeHtml(error.message || "Storage read failed.")}</div>`; }
 }
 
 function parseStorageDeclaration(input) {
   const text = input.trim().replace(/\s+/g, " ");
-  const mapping = text.match(/^mapping\s*\(\s*([^)]+?)\s*=>\s*([^)]+?)\s*\)\s*(?:public|private|internal|external)?\s*([A-Za-z_$][\w$]*)?/i);
-  if (mapping) return { kind: "mapping", keyType: normalizeSolidityType(mapping[1]), valueType: normalizeSolidityType(mapping[2]), name: mapping[3] || "mapping" };
+  const mapping = extractMappingDeclaration(text);
+  if (mapping) {
+    return mapping;
+  }
   const simple = text.match(/^([A-Za-z0-9_\[\]]+)\s*(?:public|private|internal|external)?\s*([A-Za-z_$][\w$]*)?/i);
   if (simple) return { kind: "value", valueType: normalizeSolidityType(simple[1]), name: simple[2] || "value" };
   return { kind: "value", valueType: "bytes32", name: "raw" };
+}
+
+function resolveStorageLayoutSource(input) {
+  const text = input.trim();
+  const jsonLayout = tryParseStorageLayoutJson(text);
+  if (jsonLayout) return jsonLayout;
+  return parseSolidityStorageDeclarations(text);
+}
+
+function resolveSourceLayoutText(mode, input, contractName = "") {
+  const text = input.trim();
+  const jsonLayout = tryParseStorageLayoutJson(text);
+  if (jsonLayout) return jsonLayout;
+  const layout = parseSolidityStorageDeclarations(text, contractName);
+  return {
+    ...layout,
+    sourceType: mode === "decompiled" ? "decompiled source" : "verified source",
+  };
+}
+
+function tryParseStorageLayoutJson(text) {
+  try {
+    const payload = JSON.parse(text);
+    if (!payload || !Array.isArray(payload.storage)) return null;
+    const types = payload.types || {};
+    const entries = payload.storage
+      .map((entry) => {
+        const typeInfo = describeStorageLayoutType(types[entry.type], entry.type);
+        const kindInfo = classifyStorageLayoutType(typeInfo.label);
+        return {
+          name: entry.label || "slot",
+          kind: kindInfo.kind,
+          type: typeInfo.label,
+          keyType: kindInfo.keyType,
+          valueType: kindInfo.valueType || typeInfo.label,
+          slot: BigInt(entry.slot || "0"),
+          offset: Number(entry.offset || 0),
+          slotSpan: kindInfo.slotSpan,
+          constant: false,
+          immutable: false,
+          source: "storageLayout",
+          note: kindInfo.note || typeInfo.encoding || "compiler layout",
+        };
+      })
+      .sort((a, b) => (a.slot < b.slot ? -1 : a.slot > b.slot ? 1 : a.offset - b.offset));
+    return { sourceType: "storageLayout", entries };
+  } catch {
+    return null;
+  }
+}
+
+function splitMappingTypes(text) {
+  const normalized = normalizeSolidityType(text);
+  const start = normalized.match(/^mapping\((.*)\)$/i);
+  if (!start) return null;
+  const inner = start[1];
+  let depth = 0;
+  for (let index = 0; index < inner.length - 1; index += 1) {
+    const char = inner[index];
+    if (char === "(") depth += 1;
+    else if (char === ")") depth = Math.max(depth - 1, 0);
+    else if (char === "=" && inner[index + 1] === ">" && depth === 0) {
+      return [inner.slice(0, index), inner.slice(index + 2)];
+    }
+  }
+  return null;
+}
+
+function extractMappingDeclaration(text) {
+  const normalized = String(text || "").trim().replace(/\s+/g, " ");
+  if (!/^mapping\s*\(/i.test(normalized)) return null;
+  const openIndex = normalized.indexOf("(");
+  const closeIndex = findMatchingParenIndex(normalized, openIndex);
+  if (closeIndex < 0) return null;
+  const type = normalized.slice(0, closeIndex + 1);
+  const mappingTypes = splitMappingTypes(type);
+  if (!mappingTypes) return null;
+  const tail = normalized.slice(closeIndex + 1).replace(/\s+(?:public|private|internal|external|constant|immutable|virtual|override|storage|memory|calldata|view|pure)\s*/gi, " ").trim();
+  const namePart = tail.split("=")[0].trim();
+  const nameTokens = namePart.split(/\s+/).filter(Boolean);
+  const name = nameTokens[nameTokens.length - 1] || "mapping";
+  return { kind: "mapping", keyType: normalizeSolidityType(mappingTypes[0]), valueType: normalizeSolidityType(mappingTypes[1]), name };
+}
+
+function findMatchingParenIndex(text, openIndex) {
+  let depth = 0;
+  for (let index = openIndex; index < text.length; index += 1) {
+    const char = text[index];
+    if (char === "(") depth += 1;
+    else if (char === ")") {
+      depth -= 1;
+      if (depth === 0) return index;
+    }
+  }
+  return -1;
+}
+
+function findMatchingBraceIndex(text, openIndex) {
+  let depth = 0;
+  for (let index = openIndex; index < text.length; index += 1) {
+    const char = text[index];
+    if (char === "{") depth += 1;
+    else if (char === "}") {
+      depth -= 1;
+      if (depth === 0) return index;
+    }
+  }
+  return -1;
+}
+
+function describeStorageLayoutType(typeInfo, fallbackLabel) {
+  if (!typeInfo) return { label: fallbackLabel || "unknown", encoding: "unknown" };
+  return {
+    label: typeInfo.label || fallbackLabel || "unknown",
+    encoding: typeInfo.encoding || "unknown",
+  };
+}
+
+function classifyStorageLayoutType(typeLabel) {
+  const normalized = normalizeSolidityType(typeLabel);
+  const mappingTypes = splitMappingTypes(normalized);
+  if (mappingTypes) {
+    return {
+      kind: "mapping",
+      keyType: normalizeSolidityType(mappingTypes[0]),
+      valueType: normalizeSolidityType(mappingTypes[1]),
+      slotSpan: 1n,
+      note: "mapping value lives at keccak256(abi.encode(key, baseSlot))",
+    };
+  }
+  if (/^(bytes|string)$/i.test(normalized)) {
+    return { kind: "dynamic", slotSpan: 1n, note: "length/pointer slot; data is stored separately" };
+  }
+  if (/^\w+\[\]$/.test(normalized)) {
+    return { kind: "dynamic-array", slotSpan: 1n, note: "array length is in the slot; elements start at keccak256(slot)" };
+  }
+  const fixedArray = normalized.match(/^(.+?)\[(\d+)\]$/);
+  if (fixedArray) {
+    const element = classifyStorageLayoutType(fixedArray[1]);
+    const length = BigInt(fixedArray[2]);
+    let slotSpan = length;
+    if (element.kind === "static" && typeof element.sizeBytes === "number") {
+      const totalBytes = element.sizeBytes * Number(length);
+      slotSpan = BigInt(Math.ceil(totalBytes / 32));
+    } else if (element.slotSpan && element.slotSpan > 0n) {
+      slotSpan = element.slotSpan * length;
+    }
+    return {
+      kind: "fixed-array",
+      slotSpan,
+      note: `fixed array of ${fixedArray[2]} element(s)`,
+    };
+  }
+  const sizeBytes = storageValueSizeBytes(normalized);
+  if (sizeBytes !== null) {
+    return {
+      kind: "static",
+      sizeBytes,
+      slotSpan: sizeBytes === 32 ? 1n : 0n,
+      note: sizeBytes < 32 ? `packed in ${sizeBytes} byte(s)` : "full 32-byte slot",
+    };
+  }
+  return { kind: "complex", slotSpan: 1n, note: "complex type; use storageLayout JSON for exact nested layout" };
+}
+
+function parseSolidityStorageDeclarations(text, requestedContract = "") {
+  const clean = stripSolidityComments(text);
+  const contracts = parseSolidityContracts(clean);
+  if (contracts.length) {
+    return parseContractStorageDeclarations(contracts, requestedContract);
+  }
+  const statements = splitTopLevelStatements(clean);
+  return buildStorageLayoutFromStatements(statements, "declarations");
+}
+
+function parseSolidityContracts(clean) {
+  const contracts = [];
+  const matcher = /\b(?:abstract\s+)?(contract|interface|library)\s+([A-Za-z_$][\w$]*)\s*([^{};]*)\{/gi;
+  let match;
+  while ((match = matcher.exec(clean))) {
+    const openIndex = matcher.lastIndex - 1;
+    const closeIndex = findMatchingBraceIndex(clean, openIndex);
+    if (closeIndex < 0) continue;
+    const header = match[3] || "";
+    const body = clean.slice(openIndex + 1, closeIndex);
+    contracts.push({
+      kind: match[1].toLowerCase(),
+      name: match[2],
+      bases: parseBaseContracts(header),
+      body,
+      statements: splitTopLevelStatements(body),
+      order: contracts.length,
+    });
+    matcher.lastIndex = closeIndex + 1;
+  }
+  return contracts;
+}
+
+function parseBaseContracts(header) {
+  const inheritance = header.match(/\bis\s+([\s\S]+)$/i);
+  if (!inheritance) return [];
+  return splitTopLevelComma(inheritance[1])
+    .map((item) => item.trim().match(/^([A-Za-z_$][\w$]*)/)?.[1])
+    .filter(Boolean);
+}
+
+function splitTopLevelComma(text) {
+  const parts = [];
+  let start = 0;
+  let parenDepth = 0;
+  let bracketDepth = 0;
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    if (char === "(") parenDepth += 1;
+    else if (char === ")") parenDepth = Math.max(parenDepth - 1, 0);
+    else if (char === "[") bracketDepth += 1;
+    else if (char === "]") bracketDepth = Math.max(bracketDepth - 1, 0);
+    else if (char === "," && parenDepth === 0 && bracketDepth === 0) {
+      parts.push(text.slice(start, index));
+      start = index + 1;
+    }
+  }
+  parts.push(text.slice(start));
+  return parts;
+}
+
+function splitTopLevelStatements(body) {
+  const statements = [];
+  let current = "";
+  let parenDepth = 0;
+  let bracketDepth = 0;
+  for (let index = 0; index < body.length; index += 1) {
+    const char = body[index];
+    if (char === "(") parenDepth += 1;
+    else if (char === ")") parenDepth = Math.max(parenDepth - 1, 0);
+    else if (char === "[") bracketDepth += 1;
+    else if (char === "]") bracketDepth = Math.max(bracketDepth - 1, 0);
+
+    if (char === "{" && parenDepth === 0 && bracketDepth === 0) {
+      const closeIndex = findMatchingBraceIndex(body, index);
+      if (closeIndex < 0) break;
+      current = "";
+      index = closeIndex;
+      continue;
+    }
+    if (char === ";" && parenDepth === 0 && bracketDepth === 0) {
+      const statement = current.trim();
+      if (statement) statements.push(statement);
+      current = "";
+      continue;
+    }
+    current += char;
+  }
+  const tail = current.trim();
+  if (tail) statements.push(tail);
+  return statements;
+}
+
+function parseContractStorageDeclarations(contracts, requestedContract = "") {
+  const contractMap = new Map(contracts.map((contract) => [contract.name, contract]));
+  const selected = selectStorageContract(contracts, requestedContract);
+  if (!selected) {
+    const available = contracts.map((contract) => contract.name).join(", ");
+    throw new Error(`Contract "${requestedContract}" was not found. Available contracts: ${available || "none"}.`);
+  }
+  const inheritedNames = new Set(contracts.flatMap((contract) => contract.bases));
+  const leafContracts = contracts.filter((contract) => contract.kind === "contract" && !inheritedNames.has(contract.name));
+  const orderedStatements = collectInheritedStorageStatements(selected, contractMap, new Set());
+  const layout = buildStorageLayoutFromStatements(orderedStatements, selected.name);
+  return {
+    ...layout,
+    contractName: selected.name,
+    selectionNote: requestedContract.trim()
+      ? `requested contract: ${selected.name}`
+      : leafContracts.length > 1
+        ? `auto-selected ${selected.name}; candidates: ${leafContracts.map((contract) => contract.name).join(", ")}`
+        : `auto-selected ${selected.name}`,
+    availableContracts: contracts.map((contract) => contract.name),
+  };
+}
+
+function selectStorageContract(contracts, requestedContract = "") {
+  const requested = requestedContract.trim();
+  if (requested) return contracts.find((contract) => contract.name === requested) || null;
+  const inheritedNames = new Set(contracts.flatMap((contract) => contract.bases));
+  const candidates = contracts.filter((contract) => contract.kind === "contract" && !inheritedNames.has(contract.name));
+  return candidates[candidates.length - 1] || contracts.filter((contract) => contract.kind === "contract").at(-1) || contracts.at(-1) || null;
+}
+
+function collectInheritedStorageStatements(contract, contractMap, visiting) {
+  if (visiting.has(contract.name)) return [];
+  visiting.add(contract.name);
+  const inherited = contract.bases.flatMap((baseName) => {
+    const base = contractMap.get(baseName);
+    return base ? collectInheritedStorageStatements(base, contractMap, visiting) : [];
+  });
+  visiting.delete(contract.name);
+  return [...inherited, ...contract.statements];
+}
+
+function buildStorageLayoutFromStatements(statements, sourceLabel) {
+  const entries = [];
+  let cursorSlot = 0n;
+  let cursorOffset = 0;
+  for (const statement of statements) {
+    const parsed = parseSolidityStorageStatement(statement);
+    if (!parsed) continue;
+    const layout = classifyStorageLayoutType(parsed.type);
+    if (parsed.constant || parsed.immutable) {
+      entries.push({
+        ...parsed,
+        ...layout,
+        slot: null,
+        offset: null,
+        slotSpan: 0n,
+        note: parsed.constant ? "constant: not stored on-chain" : "immutable: stored in bytecode, not storage",
+        source: "declaration",
+      });
+      continue;
+    }
+    const slotPlacement = placeStorageEntry(cursorSlot, cursorOffset, layout);
+    cursorSlot = slotPlacement.nextSlot;
+    cursorOffset = slotPlacement.nextOffset;
+    entries.push({
+      ...parsed,
+      ...layout,
+      slot: slotPlacement.slot,
+      offset: slotPlacement.offset,
+      slotSpan: slotPlacement.span,
+      source: "declaration",
+    });
+  }
+  return { sourceType: sourceLabel, entries };
+}
+
+function stripSolidityComments(text) {
+  return text
+    .replace(/\/\*[\s\S]*?\*\//g, " ")
+    .replace(/\/\/.*$/gm, " ");
+}
+
+function parseSolidityStorageStatement(statement) {
+  const text = statement.trim().replace(/\s+/g, " ");
+  if (!text) return null;
+  if (/^(function|constructor|fallback|receive|modifier|event|error|struct|enum|using|import|pragma|contract|interface|library|assembly)\b/i.test(text)) return null;
+  const constant = /\bconstant\b/i.test(text);
+  const immutable = /\bimmutable\b/i.test(text);
+  const mapping = extractMappingDeclaration(text);
+  if (mapping) return { name: mapping.name, type: `mapping(${mapping.keyType} => ${mapping.valueType})`, constant, immutable };
+  const beforeInitializer = text.split("=")[0].trim();
+  if (/[(){}]/.test(beforeInitializer)) return null;
+  const nameMatch = beforeInitializer.match(/([A-Za-z_$][\w$]*)$/);
+  if (!nameMatch) return null;
+  const name = nameMatch[1];
+  let prefix = beforeInitializer.slice(0, nameMatch.index).trim();
+  prefix = prefix.replace(/\b(?:public|private|internal|external|constant|immutable|virtual|override|storage|memory|calldata|view|pure)\b/gi, " ").replace(/\s+/g, " ").trim();
+  const type = prefix;
+  if (!type) return null;
+  if (/\b(?:return|if|else|for|while|do|emit|delete|new|require|assert|revert|unchecked)\b/i.test(type)) return null;
+  if (/[+\-*/%!<>&|?:]/.test(type)) return null;
+  return { name, type, constant, immutable };
+}
+
+function placeStorageEntry(cursorSlot, cursorOffset, layout) {
+  if (layout.kind === "mapping" || layout.kind === "dynamic" || layout.kind === "dynamic-array" || layout.kind === "complex") {
+    if (cursorOffset > 0) cursorSlot += 1n;
+    return { slot: cursorSlot, offset: 0, nextSlot: cursorSlot + layout.slotSpan, nextOffset: 0, span: layout.slotSpan };
+  }
+  if (layout.kind === "fixed-array") {
+    if (cursorOffset > 0) cursorSlot += 1n;
+    return { slot: cursorSlot, offset: 0, nextSlot: cursorSlot + layout.slotSpan, nextOffset: 0, span: layout.slotSpan };
+  }
+  const sizeBytes = layout.sizeBytes || 32;
+  if (cursorOffset + sizeBytes > 32) {
+    cursorSlot += 1n;
+    cursorOffset = 0;
+  }
+  const slot = cursorSlot;
+  const offset = cursorOffset;
+  const nextOffset = offset + sizeBytes;
+  if (sizeBytes === 32 || nextOffset === 32) {
+    return { slot, offset, nextSlot: slot + 1n, nextOffset: 0, span: 1n };
+  }
+  return { slot, offset, nextSlot: slot, nextOffset, span: 0n };
+}
+
+function storageValueSizeBytes(type) {
+  const normalized = normalizeSolidityType(type);
+  if (normalized === "bool") return 1;
+  if (normalized === "address" || normalized === "addresspayable") return 20;
+  const bytes = normalized.match(/^bytes(\d+)$/i);
+  if (bytes) {
+    const size = Number(bytes[1]);
+    if (size >= 1 && size <= 32) return size;
+    return null;
+  }
+  const integer = normalized.match(/^(u?int)(\d+)$/i);
+  if (integer) {
+    const bits = Number(integer[2]);
+    if (!Number.isInteger(bits) || bits <= 0 || bits > 256 || bits % 8 !== 0) return null;
+    return bits / 8;
+  }
+  if (normalized === "byte") return 1;
+  if (/^(enum|uint|int)$/i.test(normalized)) return 32;
+  return null;
+}
+
+function layoutSlotHex(slot) {
+  return `0x${BigInt(slot || 0).toString(16).padStart(64, "0")}`;
+}
+
+function normalizeStorageTargetName(name) {
+  return String(name || "").trim().replace(/\(\s*\)$/, "");
+}
+
+function storageLookupKey(name) {
+  return normalizeStorageTargetName(name).replace(/^_+/, "").toLowerCase();
+}
+
+function findStorageEntryByName(entries, target) {
+  const normalizedTarget = normalizeStorageTargetName(target);
+  const exact = entries.find((item) => normalizeStorageTargetName(item.name) === normalizedTarget);
+  if (exact) return { entry: exact, reason: "exact name match" };
+  const aliasTarget = storageLookupKey(normalizedTarget);
+  const aliasMatches = entries.filter((item) => storageLookupKey(item.name) === aliasTarget);
+  if (aliasMatches.length === 1) return { entry: aliasMatches[0], reason: `getter alias match: ${normalizedTarget} -> ${aliasMatches[0].name}` };
+  const scored = entries
+    .map((entry) => ({ entry, distance: levenshtein(aliasTarget, storageLookupKey(entry.name)) }))
+    .filter((item) => item.distance <= 2)
+    .sort((a, b) => a.distance - b.distance);
+  if (scored.length === 1 || (scored[0] && scored[1] && scored[0].distance < scored[1].distance)) {
+    return { entry: scored[0].entry, reason: `fuzzy match: ${normalizedTarget} -> ${scored[0].entry.name}` };
+  }
+  return { entry: null, reason: "", suggestions: scored.slice(0, 4).map((item) => item.entry.name) };
+}
+
+function levenshtein(left, right) {
+  const a = String(left || "");
+  const b = String(right || "");
+  const dp = Array.from({ length: a.length + 1 }, () => new Array(b.length + 1).fill(0));
+  for (let i = 0; i <= a.length; i += 1) dp[i][0] = i;
+  for (let j = 0; j <= b.length; j += 1) dp[0][j] = j;
+  for (let i = 1; i <= a.length; i += 1) {
+    for (let j = 1; j <= b.length; j += 1) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      dp[i][j] = Math.min(dp[i - 1][j] + 1, dp[i][j - 1] + 1, dp[i - 1][j - 1] + cost);
+    }
+  }
+  return dp[a.length][b.length];
+}
+
+function resolveStorageName(layout, targetName, targetKey = "") {
+  const target = normalizeStorageTargetName(targetName);
+  if (!layout?.entries?.length) throw new Error("No storage entries were parsed.");
+  if (target) {
+    const match = findStorageEntryByName(layout.entries, target);
+    const entry = match.entry;
+    if (!entry) {
+      const suggestionText = match.suggestions?.length ? ` Possible match: ${match.suggestions.map((item) => `<code>${escapeHtml(item)}</code>`).join(", ")}.` : "";
+      return {
+        html: storageNameSummary(layout, target) + `<div class="notice warn">No name match for <code>${escapeHtml(target)}</code>.${suggestionText}</div>` + storageLayoutEntryList(layout.entries, target),
+        layout,
+        entry: null,
+        readableSlot: "",
+      };
+    }
+    const viewLayout = entryViewLayout(entry);
+    const rows = [
+      ["Target", entry.name],
+      ["Match", match.reason],
+      ["Type", entry.type],
+      ["Status", entry.constant ? "Constant" : entry.immutable ? "Immutable" : "Stored"],
+      ["Slot number", entry.slot === null ? "not stored on-chain" : `#${entry.slot.toString()}`],
+      ["Slot hex", entry.slot === null ? "not stored on-chain" : layoutSlotHex(entry.slot)],
+      ["Byte offset", entry.offset === null ? "n/a" : `${entry.offset}`],
+      ["Storage form", entry.note || "n/a"],
+    ];
+    if (entry.kind === "mapping") {
+      rows.push(["Value formula", "keccak256(abi.encode(key, base slot))"]);
+      rows.push(["Base slot number", entry.slot === null ? "n/a" : `#${entry.slot.toString()}`]);
+      rows.push(["Base slot hex", entry.slot === null ? "n/a" : layoutSlotHex(entry.slot)]);
+      if (targetKey) {
+        const valueSlot = mappingSlotByType(targetKey, entry.keyType, layoutSlotHex(entry.slot));
+        rows.push(["Mapping key", targetKey]);
+        rows.push(["Value slot", valueSlot]);
+      return {
+        html: storageResolutionHero(entry, match.reason, targetKey, valueSlot) + storageNameSummary(layout, target) + resultRows(rows),
+        layout,
+        entry,
+        viewLayout,
+        query: { baseSlotHex: layoutSlotHex(entry.slot), storageSlot: valueSlot, formula: `keccak256(abi.encode(${entry.keyType} key, baseSlot))` },
+        readableSlot: valueSlot,
+      };
+      }
+      return {
+        html: storageResolutionHero(entry, match.reason, "") + storageNameSummary(layout, target) + resultRows(rows),
+        layout,
+        entry,
+        viewLayout,
+        query: { baseSlotHex: layoutSlotHex(entry.slot), storageSlot: layoutSlotHex(entry.slot), formula: "mapping base slot; value needs a key" },
+        readableSlot: "",
+      };
+    } else if (entry.constant || entry.immutable) {
+      rows.push(["Readability", "No storage slot exists"]);
+      return {
+        html: storageResolutionHero(entry, match.reason, "") + storageNameSummary(layout, target) + resultRows(rows),
+        layout,
+        entry,
+        viewLayout,
+        readableSlot: "",
+      };
+    }
+    const readableSlot = entry.slot === null ? "" : layoutSlotHex(entry.slot);
+    return {
+      html: storageResolutionHero(entry, match.reason, "") + storageNameSummary(layout, target) + resultRows(rows),
+      layout,
+      entry,
+      viewLayout,
+      query: entry.slot === null ? null : { baseSlotHex: layoutSlotHex(entry.slot), storageSlot: readableSlot, formula: entry.kind === "mapping" ? `keccak256(abi.encode(${entry.keyType} key, baseSlot))` : "direct slot read" },
+      readableSlot,
+    };
+  }
+  return {
+    html: storageNameSummary(layout, "") + `<div class="notice">Type a target name to resolve one slot, or use the list below to inspect the whole layout.</div>` + storageLayoutEntryList(layout.entries, ""),
+    layout,
+    entry: null,
+    viewLayout: null,
+    readableSlot: "",
+  };
+}
+
+function storageResolutionHero(entry, matchReason, targetKey = "", valueSlot = "") {
+  if (entry.constant || entry.immutable || entry.slot === null) {
+    return `<div class="slot-resolution">
+      <div class="slot-resolution-primary">
+        <span>Resolved result</span>
+        <strong>No storage slot</strong>
+        <small>${escapeHtml(entry.name)} is ${entry.constant ? "constant" : "immutable"} and is not stored in contract storage.</small>
+      </div>
+      <div class="slot-resolution-secondary">
+        <span>Match</span>
+        <strong>${escapeHtml(matchReason)}</strong>
+        <small>Nothing to read with Raw slot read.</small>
+      </div>
+    </div>`;
+  }
+  if (entry.kind === "mapping") {
+    const hasKey = Boolean(targetKey && valueSlot);
+    return `<div class="slot-resolution">
+      <div class="slot-resolution-primary">
+        <span>${hasKey ? "Mapping value slot" : "Mapping base slot"}</span>
+        <strong>${hasKey ? "Value slot ready" : `Base slot #${entry.slot.toString()}`}</strong>
+        <small>${hasKey ? escapeHtml(valueSlot) : `Use base slot ${entry.slot.toString()} with a mapping key to calculate the value slot.`}</small>
+      </div>
+      <div class="slot-resolution-secondary">
+        <span>Variable</span>
+        <strong>${escapeHtml(entry.name)}</strong>
+        <small>type: mapping(${escapeHtml(entry.keyType)} => ${escapeHtml(entry.valueType)})</small>
+      </div>
+    </div>`;
+  }
+  return `<div class="slot-resolution">
+    <div class="slot-resolution-primary">
+      <span>Resolved slot</span>
+      <strong>Slot #${entry.slot.toString()}</strong>
+      <small>Use Storage Slot Inspector -> Raw slot read -> slot index ${entry.slot.toString()}.</small>
+    </div>
+    <div class="slot-resolution-secondary">
+      <span>Variable</span>
+      <strong>${escapeHtml(entry.name)}</strong>
+      <small>${escapeHtml(entry.type)} | offset ${entry.offset === null ? "n/a" : entry.offset} | ${escapeHtml(matchReason)}</small>
+    </div>
+  </div>`;
+}
+
+function entryViewLayout(entry) {
+  if (!entry) return null;
+  if (entry.kind === "mapping") return { kind: "mapping", name: entry.name, keyType: entry.keyType, valueType: entry.valueType };
+  return { kind: "value", name: entry.name, valueType: entry.type || "bytes32" };
+}
+
+function storageNameSummary(layout, target) {
+  const sourceNote = layout.sourceType === "storageLayout"
+    ? "compiler exact layout"
+    : layout.contractName
+      ? "top-level declarations only; inherited state variables included"
+      : "best-effort declaration order; paste full layout for contract-accurate slots";
+  const contractCard = layout.contractName
+    ? `<div class="storage-card"><span>Contract</span><strong>${escapeHtml(layout.contractName)}</strong><small>${escapeHtml(layout.selectionNote || "selected contract")}</small></div>`
+    : "";
+  return `<div class="storage-summary">
+    <div class="storage-card"><span>Source</span><strong>${escapeHtml(layout.sourceType || "unknown")}</strong><small>${escapeHtml(sourceNote)}</small></div>
+    ${contractCard}
+    <div class="storage-card"><span>How to use</span><strong>resolve name first</strong><small>then switch to Raw slot read for the exact bytes32 value</small></div>
+  </div>`;
+}
+
+function storageLayoutEntryList(entries, target = "") {
+  if (!entries.length) return `<div class="notice warn">No storage declarations were parsed.</div>`;
+  return `<div class="candidate-list">${entries.map((entry) => {
+    const matched = target && normalizeStorageTargetName(entry.name) === target;
+    const slotText = entry.slot === null ? "not stored on-chain" : layoutSlotHex(entry.slot);
+    const slotLabel = entry.slot === null ? "not stored on-chain" : `slot #${entry.slot.toString()} (${slotText})`;
+    const detail = [
+      `name=${entry.name}`,
+      `type=${entry.type}`,
+      `slot=${slotLabel}`,
+      entry.offset === null ? "" : `offset=${entry.offset}`,
+      entry.note ? `note=${entry.note}` : "",
+    ].filter(Boolean).join("\n");
+    return `<div class="selector-candidate storage-layout-candidate ${matched ? "is-target" : ""}">
+      <span>${entry.constant ? "C" : entry.immutable ? "I" : entry.kind === "mapping" ? "M" : String(entry.slot ?? "").padStart(2, "0")}</span>
+      <code>${escapeHtml(detail)}</code>
+      ${entry.slot === null ? "" : copyButton(slotText)}
+    </div>`;
+  }).join("")}</div>`;
+}
+
+function storageEntryReadView(entry, query, rawValue, prefixRows = []) {
+  const layout = entryViewLayout(entry);
+  return storageLayoutSummary(layout) + resultRows([
+    ...prefixRows,
+    ["Target", entry.name],
+    ["Match", entry.kind === "mapping" ? "mapping value" : "resolved slot"],
+    ["Type", entry.type],
+    ["Slot", query.storageSlot],
+    ["Byte offset", entry.offset === null ? "n/a" : `${entry.offset}`],
+    ["Formula", query.formula],
+    ["Raw bytes32", rawValue],
+    [`Decoded ${entry.kind === "mapping" ? entry.valueType : entry.type}`, entry.kind === "mapping" ? decodeStorageValue(rawValue, entry.valueType) : decodeStorageValue(rawValue, entry.type)],
+    ["uint256 view", BigInt(rawValue).toString()],
+  ]);
 }
 
 function normalizeSolidityType(type) {
