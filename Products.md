@@ -434,21 +434,21 @@ Linsea Tools 是一个面向 Web3 逆向安全、通用开发、跨境运营与�
 
 推荐技术栈：
 
-- Next.js App Router。
 - TypeScript。
+- Vite + React。
 - Tailwind CSS。
-- shadcn/ui。
-- next-themes。
-- next-intl。
+- shadcn/ui 风格的本地组件 primitives。
+- 自定义 Theme Provider。
+- 轻量 i18n 映射。
 - Zustand 或 Jotai 管理轻量状态。
 - TanStack Query 管理远程请求状态。
 - React Hook Form + Zod 管理复杂表单与校验。
 
 前端部署：
 
-- Vercel。
+- GitHub Pages + Cloudflare 自定义域名。
 - Cloudflare Pages。
-- 静态优先，Serverless Route Handler 用于必要代理。
+- 静态优先；如后续需要隐藏平台 RPC key，再追加 Cloudflare Workers 或 Serverless Route Handler。
 
 ### 8.2 后端代理
 

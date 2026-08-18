@@ -4,23 +4,24 @@
 
 已完成的修改：
 
-- **移除了 Node.js 后端**（server.js、package.json、users.json）
+- **迁移为 Vite + React + TypeScript + Tailwind CSS**
 - **移除了登录/注册功能**，因为 GitHub Pages 是纯静态托管，无法运行后端
 - **设置面板简化**：Alchemy/Infura API Key、默认链、Privacy First Mode 全部保存在浏览器 `localStorage` 中
-- **项目现在是纯静态站点**：`index.html` + `app.js` + `styles.css`
+- **项目现在是静态构建站点**：源码在 `src/`，生产产物由 `npm run build` 输出到 `dist/`
 
 最终文件结构：
 
 ```
 tools-linsea/
-├── index.html      # 入口页面
-├── app.js          # 所有应用逻辑
-├── styles.css      # 样式
-├── CNAME           # 自定义域名 (tools.timeminer.cc)
-├── .nojekyll       # 告诉 GitHub Pages 跳过 Jekyll 处理
-├── Products.md     # 产品需求文档 (不影响部署)
-├── SKILL.md        # 技能定义
-└── README.md       # 项目说明
+├── src/                    # React + TypeScript 源码
+├── index.html              # Vite 入口页面
+├── package.json            # npm 脚本与依赖
+├── tailwind.config.ts      # Tailwind 主题配置
+├── .github/workflows/      # GitHub Pages 自动构建部署
+├── CNAME                   # 自定义域名 (tools.timeminer.cc)
+├── .nojekyll               # 告诉 GitHub Pages 跳过 Jekyll 处理
+├── Products.md             # 产品需求文档
+└── README.md               # 项目说明
 ```
 
 ---
@@ -39,7 +40,7 @@ git remote add origin https://github.com/你的用户名/你的仓库名.git
 
 # 提交所有改动
 git add -A
-git commit -m "Remove Node backend, simplify to static site for GitHub Pages"
+git commit -m "Migrate tools app to Vite React Tailwind"
 
 # 推送到 main 分支
 git push origin main
@@ -54,10 +55,13 @@ git push origin main
 1. 打开你的 GitHub 仓库页面
 2. 点击 **Settings** → 左侧菜单 **Pages**
 3. 在 **Build and deployment** 区域：
-   - **Source**：选择 `Deploy from a branch`
-   - **Branch**：选择 `main`，目录选 `/ (root)`
-   - 点击 **Save**
-4. GitHub 自动开始构建。等待 1-2 分钟，页面顶部会显示 `Your site is live at https://你的用户名.github.io/仓库名/`
+   - **Source**：选择 `GitHub Actions`
+   - 不要再选择 `Deploy from a branch / root`
+4. 推送到 `main` 后，仓库里的 `.github/workflows/pages.yml` 会自动执行：
+   - `npm ci`
+   - `npm run build`
+   - 把 `dist/` 上传到 GitHub Pages
+5. 等待 1-2 分钟，页面顶部会显示 `Your site is live at https://你的用户名.github.io/仓库名/`
 
 > 如果你的仓库名为 `tools-linsea`，默认地址是 `https://你的用户名.github.io/tools-linsea/`。这个地址之后会被自定义域名替换，不必纠结。
 

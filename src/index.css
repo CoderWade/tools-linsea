@@ -1,0 +1,149 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+  --canvas: 206 48% 96%;
+  --surface: 205 58% 99%;
+  --panel: 204 52% 94%;
+  --text: 217 38% 14%;
+  --muted: 215 20% 43%;
+  --faint: 215 16% 62%;
+  --line: 207 39% 87%;
+  --accent: 203 82% 43%;
+  --cyan: 184 78% 42%;
+  --shadow: 211 45% 30%;
+}
+
+.dark {
+  color-scheme: dark;
+  --canvas: 216 39% 6%;
+  --surface: 216 31% 10%;
+  --panel: 215 33% 13%;
+  --text: 207 52% 94%;
+  --muted: 211 21% 67%;
+  --faint: 212 18% 49%;
+  --line: 210 30% 21%;
+  --accent: 203 91% 67%;
+  --cyan: 181 72% 60%;
+  --shadow: 220 60% 2%;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  min-height: 100%;
+  background: hsl(var(--canvas));
+}
+
+body {
+  min-width: 320px;
+  min-height: 100vh;
+  margin: 0;
+  overflow-x: hidden;
+  color: hsl(var(--text));
+  background:
+    linear-gradient(hsl(var(--accent) / 0.045) 1px, transparent 1px),
+    linear-gradient(90deg, hsl(var(--accent) / 0.045) 1px, transparent 1px),
+    linear-gradient(118deg, hsl(var(--cyan) / 0.1), transparent 28%, hsl(var(--accent) / 0.08) 72%, transparent),
+    hsl(var(--canvas));
+  background-attachment: fixed;
+  background-size: 32px 32px, 32px 32px, auto, auto;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+::selection {
+  background: hsl(var(--accent) / 0.24);
+}
+
+@layer components {
+  .front-canvas {
+    position: relative;
+    isolation: isolate;
+  }
+
+  .front-canvas::before {
+    content: "";
+    position: fixed;
+    z-index: -1;
+    inset: 0 0 0 276px;
+    pointer-events: none;
+    background:
+      linear-gradient(180deg, hsl(var(--surface) / 0.42), transparent 34rem),
+      linear-gradient(90deg, hsl(var(--accent) / 0.08), transparent 18rem),
+      linear-gradient(hsl(var(--accent) / 0.035) 1px, transparent 1px),
+      linear-gradient(90deg, hsl(var(--accent) / 0.035) 1px, transparent 1px);
+    background-size: auto, auto, 32px 32px, 32px 32px;
+    mask-image: linear-gradient(90deg, transparent, black 4rem, black);
+  }
+
+  .tech-card {
+    position: relative;
+    overflow: hidden;
+    background-color: hsl(var(--surface) / 0.78);
+    @apply rounded-tool border border-line shadow-soft backdrop-blur-xl;
+  }
+
+  .tech-card::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background:
+      linear-gradient(135deg, hsl(var(--accent) / 0.08), transparent 42%),
+      linear-gradient(hsl(var(--accent) / 0.035) 1px, transparent 1px),
+      linear-gradient(90deg, hsl(var(--accent) / 0.03) 1px, transparent 1px);
+    background-size: auto, 28px 28px, 28px 28px;
+  }
+
+  .tech-card > * {
+    position: relative;
+  }
+
+  .tech-gradient-border {
+    position: relative;
+  }
+
+  .tech-gradient-border::before {
+    content: "";
+    position: absolute;
+    inset: -1px;
+    z-index: -1;
+    border-radius: inherit;
+    background: linear-gradient(135deg, hsl(var(--accent) / 0.42), hsl(var(--cyan) / 0.18), transparent 55%);
+  }
+
+  .mono {
+    @apply font-mono;
+  }
+
+  .panel-surface {
+    position: relative;
+    isolation: isolate;
+    background:
+      linear-gradient(180deg, hsl(var(--surface) / 0.76), hsl(var(--panel) / 0.52)),
+      linear-gradient(135deg, hsl(var(--accent) / 0.08), transparent 48%),
+      linear-gradient(hsl(var(--accent) / 0.035) 1px, transparent 1px),
+      linear-gradient(90deg, hsl(var(--accent) / 0.03) 1px, transparent 1px);
+    background-size: auto, auto, 28px 28px, 28px 28px;
+  }
+
+  .panel-surface::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    border-radius: inherit;
+    background: linear-gradient(180deg, hsl(var(--cyan) / 0.08), transparent 46%);
+  }
+}
+
+@media (max-width: 1024px) {
+  .front-canvas::before {
+    left: 0;
+    mask-image: none;
+  }
+}
