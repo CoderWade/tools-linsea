@@ -33,6 +33,13 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Verify production artifact
+        run: |
+          test -f dist/index.html
+          test -d dist/assets
+          ! grep -q '/src/main.tsx' dist/index.html
+          grep -q './assets/' dist/index.html
+
       - name: Copy static deployment files
         run: |
           cp CNAME dist/CNAME
