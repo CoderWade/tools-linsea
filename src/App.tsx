@@ -11,16 +11,13 @@ import {
   Layers3,
   LockKeyhole,
   Moon,
-  PackageCheck,
+  Binary,
   Route,
   Search,
   ShieldCheck,
-  Sparkles,
   Sun,
-  Truck,
-  UserRound,
 } from "lucide-react";
-import { ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { ReactNode, useEffect, useMemo, useState } from "react";
 import { Button, Combobox, CommandInput, CopyButton, Field, IconButton, Input, Modal, Notice, Panel, ResultRows, Select, Tabs, Textarea, cn } from "./components/ui";
 import {
   decodeStorageValue,
@@ -35,7 +32,7 @@ import {
   toSlotHex,
 } from "./lib/evm";
 
-type CategoryId = "reverse" | "developer" | "commerce" | "risk";
+type CategoryId = "reverse" | "developer";
 type ToolId =
   | "storage-slot"
   | "source-layout"
@@ -48,12 +45,8 @@ type ToolId =
   | "jwt-inspector"
   | "json-studio"
   | "timestamp-pro"
-  | "text-compare"
-  | "fba-calculator"
-  | "listing-cleaner"
-  | "white-bg"
-  | "shipping-tracker"
-  | "card-bin";
+  | "base-converter"
+  | "text-compare";
 
 type Tool = {
   id: ToolId;
@@ -79,8 +72,6 @@ const SETTINGS_KEY = "linsea-tools-settings";
 const categories: Array<{ id: CategoryId; name: string; zh: string }> = [
   { id: "reverse", name: "Reverse Security", zh: "逆向安全" },
   { id: "developer", name: "Developer", zh: "通用开发" },
-  { id: "commerce", name: "Commerce", zh: "跨境运营" },
-  { id: "risk", name: "Risk Testing", zh: "风控测试" },
 ];
 
 const tools: Tool[] = [
@@ -95,20 +86,17 @@ const tools: Tool[] = [
   { id: "jwt-inspector", category: "reverse", name: "JWT Inspector", zh: "JWT 检查器", description: "Decode JWT header and payload without sending it anywhere.", keywords: ["jwt", "token", "exp", "payload"], badges: ["Local", "Auth"], icon: <ShieldCheck /> },
   { id: "json-studio", category: "developer", name: "JSON Studio", zh: "JSON 工作台", description: "Format, minify, validate, and infer TypeScript shapes.", keywords: ["json", "format", "typescript"], badges: ["Formatter", "Local"], icon: <Braces /> },
   { id: "timestamp-pro", category: "developer", name: "Timestamp Pro", zh: "时间戳工具", description: "Convert timestamps and dates across IANA timezones.", keywords: ["timestamp", "unix", "timezone"], badges: ["IANA", "Date"], icon: <Clock3 /> },
+  { id: "base-converter", category: "developer", name: "Base Converter", zh: "进制转换器", description: "Convert integers across binary, octal, decimal, hex, and custom bases.", keywords: ["base", "radix", "binary", "hex", "decimal", "进制", "二进制", "十六进制"], badges: ["BigInt", "2-36"], icon: <Binary /> },
   { id: "text-compare", category: "developer", name: "Text Compare", zh: "文本对比", description: "Compare two text versions with readable line-level diffs.", keywords: ["diff", "text", "compare"], badges: ["Diff", "Local"], icon: <Contrast /> },
-  { id: "fba-calculator", category: "commerce", name: "FBA & Landed Cost Calculator", zh: "FBA 到岸成本计算器", description: "Estimate margin, ROI, platform fees, and landed cost.", keywords: ["fba", "amazon", "margin"], badges: ["Estimator", "Local"], icon: <PackageCheck /> },
-  { id: "listing-cleaner", category: "commerce", name: "Listing Text Cleaner", zh: "Listing 文本清洗", description: "Strip HTML, normalize whitespace, and export clean copy.", keywords: ["listing", "html", "clean"], badges: ["Text", "Local"], icon: <Sparkles /> },
-  { id: "white-bg", category: "commerce", name: "Product Pure White BG", zh: "产品白底图", description: "Client-side white background helper for product photos.", keywords: ["image", "white", "background"], badges: ["Canvas", "Local"], icon: <Sparkles /> },
-  { id: "shipping-tracker", category: "commerce", name: "Global Shipping Tracker", zh: "全球物流追踪", description: "Guess carrier tracking links from common tracking formats.", keywords: ["tracking", "shipping", "carrier"], badges: ["Outbound", "Link"], icon: <Truck /> },
-  { id: "card-bin", category: "risk", name: "Card & BIN Tester", zh: "卡号与 BIN 测试", description: "Validate Luhn and generate sandbox-only test card numbers.", keywords: ["luhn", "bin", "card", "sandbox"], badges: ["Compliance", "Test"], icon: <UserRound /> },
 ];
 
 const defaultSettings: Settings = { alchemyKey: "", infuraKey: "", defaultChain: "ethereum", privacyMode: false };
 
 export function App() {
   const boot = loadState();
-  const [activeCategory, setActiveCategory] = useState<CategoryId>(boot.category || "reverse");
-  const [activeToolId, setActiveToolId] = useState<ToolId>(boot.tool || "storage-slot");
+  const bootTool = tools.find((tool) => tool.id === boot.tool) || tools[0];
+  const [activeCategory, setActiveCategory] = useState<CategoryId>(bootTool.category);
+  const [activeToolId, setActiveToolId] = useState<ToolId>(bootTool.id);
   const [theme, setTheme] = useState<"light" | "dark">(boot.theme || "dark");
   const [language, setLanguage] = useState<"en" | "zh">(boot.language || "en");
   const [settings, setSettings] = useState<Settings>({ ...defaultSettings, ...loadSettingsCache(), ...(boot.settings || {}) });
@@ -283,12 +271,8 @@ function ToolWorkbench({ tool, settings }: { tool: Tool; settings: Settings }) {
     case "jwt-inspector": return <JwtInspector />;
     case "json-studio": return <JsonStudio />;
     case "timestamp-pro": return <TimestampPro />;
+    case "base-converter": return <BaseConverter />;
     case "text-compare": return <TextCompare />;
-    case "fba-calculator": return <FbaCalculator />;
-    case "listing-cleaner": return <ListingCleaner />;
-    case "white-bg": return <WhiteBgTool />;
-    case "shipping-tracker": return <ShippingTracker />;
-    case "card-bin": return <CardTester />;
     default: return null;
   }
 }
@@ -699,6 +683,99 @@ function TimestampReadout({ date, zone, source }: { date: Date; zone: string; so
   );
 }
 
+function BaseConverter() {
+  const [input, setInput] = useState("0x1a2b3c");
+  const [fromBase, setFromBase] = useState("16");
+  const [toBase, setToBase] = useState("10");
+  const [uppercase, setUppercase] = useState(true);
+  const [grouped, setGrouped] = useState(true);
+  const baseOptions = [
+    { value: "2", label: "Binary (base 2)" },
+    { value: "8", label: "Octal (base 8)" },
+    { value: "10", label: "Decimal (base 10)" },
+    { value: "16", label: "Hexadecimal (base 16)" },
+    { value: "36", label: "Base36 (0-9A-Z)" },
+  ];
+  const parsed = useMemo(() => {
+    try {
+      const base = Number(fromBase);
+      const target = Number(toBase);
+      const value = parseRadixInteger(input, base);
+      return { value, output: formatRadixInteger(value, target, uppercase), error: "" };
+    } catch (error) {
+      return { value: 0n, output: "", error: (error as Error).message };
+    }
+  }, [fromBase, input, toBase, uppercase]);
+  const resultRows = parsed.error ? [] : [
+    { label: "Input base", value: fromBase },
+    { label: "Output base", value: toBase },
+    { label: "Converted", value: parsed.output },
+    { label: "Decimal (base 10)", value: parsed.value.toString() },
+    { label: "Hexadecimal prefixed", value: `${parsed.value < 0n ? "-" : ""}0x${formatRadixInteger(absBigInt(parsed.value), 16, uppercase)}` },
+    { label: "Binary prefixed", value: `${parsed.value < 0n ? "-" : ""}0b${formatGroupedRadix(absBigInt(parsed.value), 2, uppercase, grouped)}` },
+    ...buildRadixRows(parsed.value, uppercase, grouped),
+  ];
+
+  return (
+    <Workbench wide>
+      <Panel title="Radix Input">
+        <div className="grid gap-5">
+          <Field label="Integer">
+            <Input className="mono" value={input} onChange={(event) => setInput(event.target.value)} placeholder="0x1a2b3c, 110101, 755, -42" />
+          </Field>
+          <div className="grid grid-cols-[minmax(0,1fr)_72px_minmax(0,1fr)] items-end gap-3 max-md:grid-cols-1">
+            <Field label="From base"><Select value={fromBase} onChange={setFromBase} options={baseOptions} /></Field>
+            <Button className="h-11 px-2" variant="ghost" onClick={() => { setFromBase(toBase); setToBase(fromBase); }}>Swap</Button>
+            <Field label="To base"><Select value={toBase} onChange={setToBase} options={baseOptions} /></Field>
+          </div>
+          <div className="grid grid-cols-[minmax(0,1fr)_72px_minmax(0,1fr)] items-end gap-3 max-md:grid-cols-1">
+            <Field label="Custom from"><Input className="mono" value={fromBase} onChange={(event) => setFromBase(event.target.value)} /></Field>
+            <div className="hidden max-md:hidden md:block" />
+            <Field label="Custom to"><Input className="mono" value={toBase} onChange={(event) => setToBase(event.target.value)} /></Field>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button className="min-w-28" variant="default" onClick={() => { setInput("0x1a2b3c"); setFromBase("16"); setToBase("10"); }}>Hex to Dec</Button>
+            <Button className="min-w-28" variant="default" onClick={() => { setInput("255"); setFromBase("10"); setToBase("16"); }}>Dec to Hex</Button>
+            <Button className="min-w-28" variant="default" onClick={() => { setInput("11111111"); setFromBase("2"); setToBase("10"); }}>Bin to Dec</Button>
+            <Button className="min-w-24" variant="ghost" onClick={() => setInput("")}>Clear</Button>
+          </div>
+          <div className="grid grid-cols-2 gap-3 max-sm:grid-cols-1">
+            <label className="flex items-center justify-between gap-3 rounded-2xl border border-line bg-panel p-3 text-sm font-semibold text-text">
+              Uppercase output
+              <input type="checkbox" checked={uppercase} onChange={(event) => setUppercase(event.target.checked)} />
+            </label>
+            <label className="flex items-center justify-between gap-3 rounded-2xl border border-line bg-panel p-3 text-sm font-semibold text-text">
+              Group binary/hex
+              <input type="checkbox" checked={grouped} onChange={(event) => setGrouped(event.target.checked)} />
+            </label>
+          </div>
+          <Notice>Supports bases 2-36. Prefixes <code>0x</code>, <code>0b</code>, and <code>0o</code> are accepted when they match the input base.</Notice>
+        </div>
+      </Panel>
+      <Panel title="Readout">
+        {parsed.error ? (
+          <Notice tone="danger">{parsed.error}</Notice>
+        ) : (
+          <div className="grid gap-4">
+            <Metric label={`Base ${toBase} output`} value={<code className="block break-all text-xl">{parsed.output}</code>} hint={`${input || "0"} from base ${fromBase}`} />
+            <div className="overflow-hidden rounded-2xl border border-line bg-panel">
+              {resultRows.map((row) => (
+                <div key={row.label} className="grid min-h-14 grid-cols-[220px_minmax(0,1fr)_104px] items-center gap-4 border-b border-line px-4 py-3 last:border-b-0 max-md:grid-cols-[minmax(120px,180px)_minmax(0,1fr)_92px] max-sm:grid-cols-1">
+                  <span className="min-w-0 text-sm font-semibold leading-5 text-muted">{row.label}</span>
+                  <code className="min-w-0 break-all text-sm leading-6 text-text">{row.value}</code>
+                  <div className="justify-self-end max-sm:justify-self-start">
+                    <CopyButton value={row.value} />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </Panel>
+    </Workbench>
+  );
+}
+
 function TextCompare() {
   const [left, setLeft] = useState("");
   const [right, setRight] = useState("");
@@ -795,81 +872,6 @@ function EncryptionTool() {
   return <Workbench><Panel title="Cipher"><div className="grid gap-4"><Field label="Mode"><Select value={mode} onChange={setMode} options={[{ value: "encrypt", label: "Encrypt AES-GCM" }, { value: "decrypt", label: "Decrypt AES-GCM bundle" }]} /></Field><Field label="Data"><Textarea className="mono min-h-[260px]" value={data} onChange={(e) => setData(e.target.value)} /></Field><Field label="Password"><Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} /></Field><Button variant="primary" onClick={run}>{mode === "encrypt" ? "Encrypt locally" : "Decrypt locally"}</Button></div></Panel><Panel title="Output">{output}</Panel></Workbench>;
 }
 
-function WhiteBgTool() {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const imageRef = useRef<HTMLImageElement | null>(null);
-  const [threshold, setThreshold] = useState("222");
-  const [status, setStatus] = useState("Upload a product image to preview white background processing.");
-  const draw = (nextThreshold = Number(threshold)) => {
-    const canvas = canvasRef.current;
-    const image = imageRef.current;
-    if (!canvas || !image) return;
-    const maxWidth = 880;
-    const scale = Math.min(1, maxWidth / image.width);
-    canvas.width = Math.max(1, Math.round(image.width * scale));
-    canvas.height = Math.max(1, Math.round(image.height * scale));
-    const context = canvas.getContext("2d");
-    if (!context) return;
-    context.drawImage(image, 0, 0, canvas.width, canvas.height);
-    const frame = context.getImageData(0, 0, canvas.width, canvas.height);
-    for (let i = 0; i < frame.data.length; i += 4) {
-      const r = frame.data[i], g = frame.data[i + 1], b = frame.data[i + 2];
-      if (r > nextThreshold && g > nextThreshold && b > nextThreshold) {
-        frame.data[i] = 255;
-        frame.data[i + 1] = 255;
-        frame.data[i + 2] = 255;
-      }
-    }
-    context.putImageData(frame, 0, 0);
-    setStatus(`Processed ${canvas.width} x ${canvas.height}.`);
-  };
-  const loadFile = (file?: File) => {
-    if (!file) return;
-    const image = new Image();
-    image.onload = () => {
-      imageRef.current = image;
-      draw();
-      URL.revokeObjectURL(image.src);
-    };
-    image.src = URL.createObjectURL(file);
-  };
-  return <Workbench><Panel title="Image Input"><div className="grid gap-4"><Field label="Product image"><Input type="file" accept="image/*" onChange={(e) => loadFile(e.target.files?.[0])} /></Field><Field label="White threshold"><Input type="range" min="180" max="252" value={threshold} onChange={(e) => { setThreshold(e.target.value); draw(Number(e.target.value)); }} /></Field><Notice>{status}</Notice></div></Panel><Panel title="Preview"><canvas ref={canvasRef} className="min-h-[280px] w-full rounded-2xl border border-line bg-white object-contain" /></Panel></Workbench>;
-}
-
-function FbaCalculator() {
-  const [price, setPrice] = useState("29.99");
-  const [cost, setCost] = useState("8.50");
-  const [ship, setShip] = useState("3.20");
-  const [fee, setFee] = useState("15");
-  const p = Number(price), c = Number(cost), s = Number(ship), f = Number(fee) / 100;
-  const platform = p * f;
-  const profit = p - c - s - platform;
-  return <Workbench><Panel title="Inputs"><div className="grid grid-cols-2 gap-3 max-sm:grid-cols-1"><Field label="Sale price"><Input value={price} onChange={(e) => setPrice(e.target.value)} /></Field><Field label="Product cost"><Input value={cost} onChange={(e) => setCost(e.target.value)} /></Field><Field label="Shipping"><Input value={ship} onChange={(e) => setShip(e.target.value)} /></Field><Field label="Platform fee %"><Input value={fee} onChange={(e) => setFee(e.target.value)} /></Field></div></Panel><Panel title="Readout"><ResultRows rows={[["Platform fee", money(platform)], ["Profit", money(profit)], ["Margin", `${((profit / p) * 100 || 0).toFixed(2)}%`], ["ROI", `${((profit / c) * 100 || 0).toFixed(2)}%`]]} /></Panel></Workbench>;
-}
-
-function ListingCleaner() {
-  const [text, setText] = useState("<h1>Product</h1>\n\nFast&nbsp;shipping");
-  const cleaned = text.replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ").replace(/\s+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
-  return <Workbench><Panel title="Listing"><Textarea value={text} onChange={(e) => setText(e.target.value)} /></Panel><Panel title="Clean Copy"><pre className="rounded-2xl border border-line bg-panel p-4 text-sm">{cleaned}</pre><ResultRows rows={[["Characters", cleaned.length], ["Words", cleaned ? cleaned.split(/\s+/).length : 0]]} /></Panel></Workbench>;
-}
-
-function ShippingTracker() {
-  const [track, setTrack] = useState("1Z999AA10123456784");
-  const url = /^1Z/i.test(track) ? `https://www.ups.com/track?tracknum=${encodeURIComponent(track)}` : `https://www.google.com/search?q=${encodeURIComponent(`${track} tracking`)}`;
-  return <Workbench><Panel title="Tracking"><Field label="Tracking number"><Input className="mono" value={track} onChange={(e) => setTrack(e.target.value)} /></Field></Panel><Panel title="Readout"><ResultRows rows={[["Tracking number", track], ["Tracking URL", url]]} /><a className="mt-4 inline-flex rounded-xl border border-line px-3 py-2 text-sm font-bold text-accent" href={url} target="_blank" rel="noreferrer">Open tracking</a></Panel></Workbench>;
-}
-
-function CardTester() {
-  const [number, setNumber] = useState("4242424242424242");
-  const clean = number.replace(/\D/g, "");
-  const valid = clean.length >= 12 && luhn(clean);
-  return <Workbench><Panel title="Compliance"><Notice tone="warn">Sandbox and QA use only. This validates format and Luhn checksum; it does not query or generate real cards.</Notice><Field label="Card number"><Input className="mono mt-4" value={number} onChange={(e) => setNumber(e.target.value)} /></Field></Panel><Panel title="Readout"><ResultRows rows={[["Normalized", clean], ["Network", network(clean)], ["Luhn", valid ? "Valid" : "Invalid"], ["Length", clean.length]]} /></Panel></Workbench>;
-}
-
-function Placeholder({ title, body }: { title: string; body: string }) {
-  return <Workbench><Panel title={title}><Notice>{body}</Notice></Panel><Panel title="Readout"><Notice>Componentized React migration placeholder.</Notice></Panel></Workbench>;
-}
-
 function Metric({ label, value, hint }: { label: string; value: ReactNode; hint?: ReactNode }) {
   return <div className="rounded-2xl border border-accent/30 bg-[linear-gradient(135deg,hsl(var(--accent)/0.12),transparent_58%)] p-4"><div className="text-[11px] font-black uppercase tracking-[0.16em] text-faint">{label}</div><div className="mt-2 break-words text-2xl font-black text-accent">{value}</div>{hint ? <div className="mt-2 break-words text-sm leading-6 text-muted">{hint}</div> : null}</div>;
 }
@@ -947,10 +949,67 @@ function unitDecimals(unit: string, tokenDecimals: number) {
   if (unit === "ether") return 18;
   return tokenDecimals;
 }
-function timestampToDate(value: string) {
-  if (!/^-?\d+$/.test(value.trim())) throw new Error("Timestamp must be an integer.");
-  const n = Number(value);
-  return new Date(Math.abs(n) > 1e12 ? n : n * 1000);
+function parseRadixInteger(input: string, radix: number) {
+  const base = normalizeBase(radix);
+  const raw = input.trim().replace(/_/g, "");
+  if (!raw) throw new Error("Enter an integer to convert.");
+  const negative = raw.startsWith("-");
+  const unsigned = raw.replace(/^[+-]/, "");
+  const body = unsigned.replace(/^0[xX]/, "").replace(/^0[bB]/, "").replace(/^0[oO]/, "");
+  const expectedPrefix = base === 16 ? /^0[xX]/ : base === 2 ? /^0[bB]/ : base === 8 ? /^0[oO]/ : null;
+  const hasKnownPrefix = /^0[xX]|^0[bB]|^0[oO]/.test(unsigned);
+  if (hasKnownPrefix && expectedPrefix && !expectedPrefix.test(unsigned)) throw new Error(`Input prefix does not match base ${base}.`);
+  if (hasKnownPrefix && !expectedPrefix) throw new Error(`Remove the prefix or change input base to match it.`);
+  if (!body) throw new Error("Enter digits after the prefix.");
+  let value = 0n;
+  for (const char of body.toLowerCase()) {
+    const digit = digitValue(char);
+    if (digit < 0 || digit >= base) throw new Error(`Digit "${char}" is invalid for base ${base}.`);
+    value = value * BigInt(base) + BigInt(digit);
+  }
+  return negative ? -value : value;
+}
+function normalizeBase(value: number) {
+  if (!Number.isInteger(value) || value < 2 || value > 36) throw new Error("Base must be an integer from 2 to 36.");
+  return value;
+}
+function digitValue(char: string) {
+  const code = char.charCodeAt(0);
+  if (code >= 48 && code <= 57) return code - 48;
+  if (code >= 97 && code <= 122) return code - 87;
+  return -1;
+}
+function formatRadixInteger(value: bigint, radix: number, uppercase: boolean) {
+  const base = normalizeBase(radix);
+  const negative = value < 0n;
+  const raw = absBigInt(value).toString(base);
+  const cased = uppercase ? raw.toUpperCase() : raw;
+  return negative ? `-${cased}` : cased;
+}
+function formatGroupedRadix(value: bigint, radix: number, uppercase: boolean, grouped: boolean) {
+  const output = formatRadixInteger(value, radix, uppercase);
+  if (!grouped) return output;
+  if (radix === 2) return groupFromRight(output, 4);
+  if (radix === 16) return groupFromRight(output, 2);
+  return output;
+}
+function groupFromRight(value: string, size: number) {
+  const negative = value.startsWith("-");
+  const body = negative ? value.slice(1) : value;
+  const grouped = body.replace(new RegExp(`\\B(?=(?:[0-9A-Z]{${size}})+(?![0-9A-Z]))`, "gi"), "_");
+  return negative ? `-${grouped}` : grouped;
+}
+function buildRadixRows(value: bigint, uppercase: boolean, grouped: boolean) {
+  return [
+    { label: "Binary (base 2)", value: formatGroupedRadix(value, 2, uppercase, grouped) },
+    { label: "Octal (base 8)", value: formatRadixInteger(value, 8, uppercase) },
+    { label: "Decimal (base 10)", value: value.toString() },
+    { label: "Hexadecimal (base 16)", value: formatGroupedRadix(value, 16, uppercase, grouped) },
+    { label: "Base36 (0-9A-Z)", value: formatRadixInteger(value, 36, uppercase) },
+  ];
+}
+function absBigInt(value: bigint) {
+  return value < 0n ? -value : value;
 }
 function parseTimeInput(value: string, unit: string, zone: string): { date: Date; source: string } {
   const text = value.trim();
@@ -1161,21 +1220,4 @@ function inferValue(value: unknown): string {
   if (Array.isArray(value)) return `${inferValue(value[0])}[]`;
   if (typeof value === "object") return "{ [key: string]: unknown }";
   return typeof value;
-}
-function money(value: number) { return Number.isFinite(value) ? `$${value.toFixed(2)}` : "n/a"; }
-function luhn(number: string) {
-  let sum = 0, double = false;
-  for (let i = number.length - 1; i >= 0; i -= 1) {
-    let digit = Number(number[i]);
-    if (double) { digit *= 2; if (digit > 9) digit -= 9; }
-    sum += digit; double = !double;
-  }
-  return sum % 10 === 0;
-}
-function network(number: string) {
-  if (/^4/.test(number)) return "Visa";
-  if (/^(5[1-5]|2[2-7])/.test(number)) return "Mastercard";
-  if (/^3[47]/.test(number)) return "American Express";
-  if (/^6(?:011|5)/.test(number)) return "Discover";
-  return "Unknown";
 }
