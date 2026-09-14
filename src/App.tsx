@@ -7,6 +7,7 @@ import {
   Contrast,
   FileCode2,
   Fingerprint,
+  Globe2,
   KeyRound,
   Layers3,
   LockKeyhole,
@@ -32,7 +33,7 @@ import {
   toSlotHex,
 } from "./lib/evm";
 
-type CategoryId = "reverse" | "developer";
+type CategoryId = "reverse" | "developer" | "general";
 type ToolId =
   | "storage-slot"
   | "source-layout"
@@ -46,7 +47,8 @@ type ToolId =
   | "json-studio"
   | "timestamp-pro"
   | "base-converter"
-  | "text-compare";
+  | "text-compare"
+  | "market-clock";
 
 type Tool = {
   id: ToolId;
@@ -72,6 +74,7 @@ const SETTINGS_KEY = "linsea-tools-settings";
 const categories: Array<{ id: CategoryId; name: string; zh: string }> = [
   { id: "reverse", name: "Reverse Security", zh: "逆向安全" },
   { id: "developer", name: "Developer", zh: "通用开发" },
+  { id: "general", name: "General Tools", zh: "通用工具" },
 ];
 
 const tools: Tool[] = [
@@ -88,6 +91,7 @@ const tools: Tool[] = [
   { id: "timestamp-pro", category: "developer", name: "Timestamp Pro", zh: "时间戳工具", description: "Convert timestamps and dates across IANA timezones.", keywords: ["timestamp", "unix", "timezone"], badges: ["IANA", "Date"], icon: <Clock3 /> },
   { id: "base-converter", category: "developer", name: "Base Converter", zh: "进制转换器", description: "Convert integers across binary, octal, decimal, hex, and custom bases.", keywords: ["base", "radix", "binary", "hex", "decimal", "进制", "二进制", "十六进制"], badges: ["BigInt", "2-36"], icon: <Binary /> },
   { id: "text-compare", category: "developer", name: "Text Compare", zh: "文本对比", description: "Compare two text versions with readable line-level diffs.", keywords: ["diff", "text", "compare"], badges: ["Diff", "Local"], icon: <Contrast /> },
+  { id: "market-clock", category: "general", name: "Market Clock", zh: "时间看盘", description: "Live Beijing / Hong Kong / New York clocks with US DST state and trading-session status for US, A-share, and HK markets.", keywords: ["market", "clock", "timezone", "trading", "dst", "开盘", "收盘", "夏令时", "冬令时", "美股", "港股", "A股", "时间"], badges: ["Live clock", "DST aware", "Trading hours"], icon: <Globe2 /> },
 ];
 
 const defaultSettings: Settings = { alchemyKey: "", infuraKey: "", defaultChain: "ethereum", privacyMode: false };
@@ -273,6 +277,7 @@ function ToolWorkbench({ tool, settings }: { tool: Tool; settings: Settings }) {
     case "timestamp-pro": return <TimestampPro />;
     case "base-converter": return <BaseConverter />;
     case "text-compare": return <TextCompare />;
+    case "market-clock": return <MarketClock />;
     default: return null;
   }
 }
@@ -783,6 +788,185 @@ function TextCompare() {
   return <Workbench wide><Panel title="Compare"><div className="grid grid-cols-2 gap-4 max-md:grid-cols-1"><Field label="Original"><Textarea className="mono min-h-[320px]" value={left} onChange={(e) => setLeft(e.target.value)} /></Field><Field label="Changed"><Textarea className="mono min-h-[320px]" value={right} onChange={(e) => setRight(e.target.value)} /></Field></div><pre className="mt-4 max-h-[480px] overflow-auto rounded-2xl border border-line bg-panel p-4 font-mono text-sm leading-6">{rows.map((row, i) => <div key={i} className={cn(row.type === "add" && "text-emerald-500", row.type === "remove" && "text-red-500", row.type === "same" && "text-muted")}>{row.type === "add" ? "+" : row.type === "remove" ? "-" : " "} {row.text}</div>)}</pre></Panel></Workbench>;
 }
 
+function MarketClock() {
+  const now = useTicker(1000);
+  const dst = usDstInfo(now);
+  return (
+    <div className="grid gap-4">
+      <Panel title="World Clock">
+        <div className="grid grid-cols-3 gap-4 max-lg:grid-cols-1">
+          <ClockTile city="北京" en="Beijing" zone="Asia/Shanghai" badge="UTC+8" now={now} />
+          <ClockTile city="香港" en="Hong Kong" zone="Asia/Hong_Kong" badge="UTC+8" now={now} />
+          <ClockTile city="纽约" en="New York" zone="America/New_York" badge={`${dst.abbr} · ${dst.offset}`} now={now} tone={dst.inDst ? "dst" : "std"} />
+        </div>
+      </Panel>
+
+      <Panel title="Market Sessions">
+        <div className="grid gap-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <SessionLegend />
+            <span className="font-mono text-[11px] font-bold text-faint">刷新 {formatInZone(now, "Asia/Shanghai").slice(11)} 北京</span>
+          </div>
+          <UsDstBanner now={now} />
+          <div className="grid grid-cols-3 gap-4 max-xl:grid-cols-1">
+            {MARKETS.map((market) => <MarketCard key={market.id} market={market} now={now} />)}
+          </div>
+          <Notice tone="warn">节假日（美国感恩节、A 股春节/国庆等）与临时休市未纳入判断，仅按周一至周五与常规交易时段计算。时间基于浏览器 IANA 时区数据库，夏令时自动切换。</Notice>
+        </div>
+      </Panel>
+    </div>
+  );
+}
+
+function ClockTile({ city, en, zone, badge, now, tone }: { city: string; en: string; zone: string; badge: string; now: Date; tone?: "dst" | "std" }) {
+  const parts = zoneParts(now, zone);
+  const daytime = parts.hour >= 6 && parts.hour < 18;
+  return (
+    <div className="relative overflow-hidden rounded-2xl border border-line bg-panel/55 p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <span className={cn("grid h-9 w-9 place-items-center rounded-xl border", daytime ? "border-amber-400/40 bg-amber-400/10 text-amber-500" : "border-cyan/40 bg-cyan/10 text-cyan")}>
+            {daytime ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+          </span>
+          <div>
+            <div className="text-sm font-black text-text">{city}</div>
+            <div className="text-[11px] text-faint">{en}</div>
+          </div>
+        </div>
+        <span className={cn("rounded-full border px-2 py-1 text-[11px] font-bold", tone === "dst" ? "border-amber-400/45 bg-amber-400/10 text-amber-600 dark:text-amber-300" : tone === "std" ? "border-cyan/45 bg-cyan/10 text-cyan" : "border-line bg-surface text-muted")}>{badge}</span>
+      </div>
+      <div className="mt-4 font-mono text-3xl font-black tabular-nums tracking-tight text-text max-sm:text-2xl">{formatInZone(now, zone).slice(11)}</div>
+      <div className="mt-1.5 flex flex-wrap items-center gap-x-2 text-xs text-muted">
+        <span>{formatInZone(now, zone).slice(0, 10)}</span>
+        <span className="text-faint">·</span>
+        <span>{WEEKDAY_ZH[parts.weekday]}</span>
+      </div>
+      <div className="mt-1 text-[11px] text-faint">{zone}</div>
+    </div>
+  );
+}
+
+function MarketCard({ market, now }: { market: MarketDef; now: Date }) {
+  const state = useMemo(() => computeMarket(market, now), [market, now]);
+  const toneClass = {
+    open: "border-emerald-400/45 bg-emerald-500/10 text-emerald-600 dark:text-emerald-300",
+    break: "border-amber-400/45 bg-amber-400/10 text-amber-700 dark:text-amber-300",
+    pre: "border-cyan/45 bg-cyan/10 text-cyan",
+    closed: "border-line bg-panel text-muted",
+  }[state.tone];
+  return (
+    <div className="tech-card flex flex-col gap-4 p-4">
+      <header className="flex items-start justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <span className="grid h-10 w-10 place-items-center rounded-2xl border border-accent/35 bg-accent/10 text-sm font-black tracking-wide text-accent">{market.mark}</span>
+          <div>
+            <div className="font-black text-text">{market.zh}</div>
+            <div className="text-[11px] text-faint">{market.exchange}</div>
+          </div>
+        </div>
+        <span className={cn("inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border px-2.5 py-1 text-[11px] font-black", toneClass)}>
+          {state.tone === "open" ? <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" /> : null}
+          {state.statusLabel}
+        </span>
+      </header>
+
+      <div className="rounded-2xl border border-accent/25 bg-[linear-gradient(135deg,hsl(var(--accent)/0.10),transparent_60%)] px-4 py-3">
+        <div className="text-[11px] font-black uppercase tracking-[0.14em] text-faint">{state.countdownLabel}</div>
+        <div className="mt-1 font-mono text-2xl font-black tabular-nums text-text">{state.countdownText}</div>
+        <div className="mt-1 text-xs text-muted">{state.targetText}</div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3">
+        <MiniStat label="开盘" value={state.openText} hint={market.id === "us" ? `北京 ${state.beijingOpen}` : "当地交易时段"} />
+        <MiniStat label="收盘" value={state.closeText} hint={market.id === "us" ? `北京 ${state.beijingClose}` : "当地交易时段"} />
+      </div>
+
+      <div className="grid gap-1.5">
+        <div className="flex items-center justify-between text-[11px] font-bold text-faint">
+          <span>当地 {state.nowTime}（{market.zoneLabel}）</span>
+          {state.isWeekend ? <span className="text-amber-600 dark:text-amber-300">周末休市</span> : null}
+        </div>
+        <SessionBar segments={market.segments} minute={state.minute} />
+      </div>
+
+      <div className="mt-auto grid gap-2 border-t border-line pt-3 text-xs">
+        <div className="flex items-baseline justify-between gap-3">
+          <span className="shrink-0 font-bold text-faint">交易时段</span>
+          <span className="min-w-0 text-right font-mono text-text">{state.sessionText}</span>
+        </div>
+        <div className="flex items-baseline justify-between gap-3">
+          <span className="shrink-0 font-bold text-faint">{state.footerLabel}</span>
+          <span className="min-w-0 text-right font-mono text-text">{state.footerText}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MiniStat({ label, value, hint }: { label: string; value: string; hint?: string }) {
+  return (
+    <div className="rounded-xl border border-line bg-panel/50 px-3 py-2">
+      <div className="text-[10px] font-black uppercase tracking-[0.14em] text-faint">{label}</div>
+      <div className="mt-0.5 font-mono text-lg font-black tabular-nums text-text">{value}</div>
+      {hint ? <div className="mt-0.5 truncate text-[10px] text-faint">{hint}</div> : null}
+    </div>
+  );
+}
+
+function SessionBar({ segments, minute }: { segments: MarketSegment[]; minute: number }) {
+  const kindClass: Record<MarketKind, string> = { pre: "bg-cyan/45", regular: "bg-accent/80", after: "bg-amber-400/50" };
+  const marker = (Math.min(Math.max(minute, 0), 1439) / 1440) * 100;
+  return (
+    <div>
+      <div className="relative h-6">
+        <div className="absolute inset-x-0 top-1/2 h-2.5 -translate-y-1/2 overflow-hidden rounded-full border border-line bg-panel">
+          {segments.map((segment) => (
+            <span key={segment.id} className={cn("absolute inset-y-0", kindClass[segment.kind])} style={{ left: `${(segment.start / 1440) * 100}%`, width: `${((segment.end - segment.start) / 1440) * 100}%` }} />
+          ))}
+        </div>
+        <div className="absolute top-0 h-6 w-0.5 -translate-x-1/2 rounded-full bg-text shadow-soft" style={{ left: `${marker}%` }} />
+      </div>
+      <div className="mt-0.5 flex justify-between font-mono text-[9px] font-bold text-faint">
+        {["00", "06", "12", "18", "24"].map((tick) => <span key={tick}>{tick}</span>)}
+      </div>
+    </div>
+  );
+}
+
+function SessionLegend() {
+  const items: Array<[string, string]> = [["交易中", "bg-accent/80"], ["盘前", "bg-cyan/45"], ["盘后", "bg-amber-400/50"]];
+  return (
+    <div className="flex flex-wrap gap-3">
+      {items.map(([label, cls]) => (
+        <span key={label} className="inline-flex items-center gap-1.5 text-[11px] font-bold text-muted">
+          <span className={cn("h-2 w-4 rounded-full", cls)} />
+          {label}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function UsDstBanner({ now }: { now: Date }) {
+  const dst = usDstInfo(now);
+  const date = formatInZone(dst.next, "America/New_York").slice(0, 10);
+  const beijing = formatInZone(dst.next, "Asia/Shanghai").slice(0, 16);
+  return (
+    <div className={cn("flex flex-wrap items-center gap-x-4 gap-y-2 rounded-2xl border px-4 py-3", dst.inDst ? "border-amber-400/40 bg-amber-400/10" : "border-cyan/35 bg-cyan/5")}>
+      <span className="inline-flex items-center gap-2 text-sm font-black text-text">
+        <span className={cn("grid h-6 w-6 place-items-center rounded-lg border", dst.inDst ? "border-amber-400/45 bg-amber-400/15 text-amber-600 dark:text-amber-300" : "border-cyan/45 bg-cyan/10 text-cyan")}>
+          {dst.inDst ? <Sun className="h-3.5 w-3.5" /> : <Moon className="h-3.5 w-3.5" />}
+        </span>
+        美国当前：{dst.inDst ? "夏令时" : "冬令时"}
+      </span>
+      <span className="rounded-full border border-line bg-surface px-2 py-0.5 font-mono text-[11px] font-bold text-muted">{dst.abbr} · {dst.offset}</span>
+      <span className="min-w-0 flex-1 text-xs leading-5 text-muted max-sm:flex-none">
+        {dst.inDst ? "夏令时结束" : "夏令时开始"}：{date} 02:00 美东（北京时间 {beijing}），时钟{dst.inDst ? "回拨 1 小时" : "前拨 1 小时"}
+      </span>
+    </div>
+  );
+}
+
 function HashSuite() {
   const [input, setInput] = useState("hello linsea");
   const [mode, setMode] = useState("keccak");
@@ -1220,4 +1404,204 @@ function inferValue(value: unknown): string {
   if (Array.isArray(value)) return `${inferValue(value[0])}[]`;
   if (typeof value === "object") return "{ [key: string]: unknown }";
   return typeof value;
+}
+
+type MarketKind = "regular" | "pre" | "after";
+type MarketSegment = { id: string; start: number; end: number; kind: MarketKind };
+type MarketDef = { id: "us" | "cn" | "hk"; zh: string; mark: string; exchange: string; zone: string; zoneLabel: string; segments: MarketSegment[]; gapText?: string };
+type ZoneParts = { year: number; month: number; day: number; hour: number; minute: number; second: number; weekday: number };
+
+const WEEKDAY_ZH = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
+
+const MARKETS: MarketDef[] = [
+  {
+    id: "us",
+    zh: "美股",
+    mark: "US",
+    exchange: "NYSE · NASDAQ",
+    zone: "America/New_York",
+    zoneLabel: "美东",
+    segments: [
+      { id: "pre", start: 240, end: 570, kind: "pre" },
+      { id: "regular", start: 570, end: 960, kind: "regular" },
+      { id: "after", start: 960, end: 1200, kind: "after" },
+    ],
+  },
+  {
+    id: "cn",
+    zh: "A股",
+    mark: "CN",
+    exchange: "上交所 · 深交所",
+    zone: "Asia/Shanghai",
+    zoneLabel: "北京",
+    gapText: "11:30 – 13:00",
+    segments: [
+      { id: "morning", start: 570, end: 690, kind: "regular" },
+      { id: "afternoon", start: 780, end: 900, kind: "regular" },
+    ],
+  },
+  {
+    id: "hk",
+    zh: "港股",
+    mark: "HK",
+    exchange: "香港交易所",
+    zone: "Asia/Hong_Kong",
+    zoneLabel: "香港",
+    gapText: "12:00 – 13:00",
+    segments: [
+      { id: "pre", start: 540, end: 570, kind: "pre" },
+      { id: "morning", start: 570, end: 720, kind: "regular" },
+      { id: "afternoon", start: 780, end: 960, kind: "regular" },
+    ],
+  },
+];
+
+function useTicker(intervalMs: number) {
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(new Date()), intervalMs);
+    return () => window.clearInterval(timer);
+  }, [intervalMs]);
+  return now;
+}
+
+function zoneParts(date: Date, zone: string): ZoneParts {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: zone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    weekday: "short",
+    hourCycle: "h23",
+  }).formatToParts(date);
+  const values: Record<string, string> = {};
+  for (const part of parts) if (part.type !== "literal") values[part.type] = part.value;
+  const weekdays: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+  return { year: Number(values.year), month: Number(values.month), day: Number(values.day), hour: Number(values.hour), minute: Number(values.minute), second: Number(values.second), weekday: weekdays[values.weekday] ?? 0 };
+}
+
+function two(value: number) {
+  return String(value).padStart(2, "0");
+}
+
+function hhmm(minuteOfDay: number) {
+  return `${two(Math.floor(minuteOfDay / 60))}:${two(minuteOfDay % 60)}`;
+}
+
+function formatDuration(ms: number) {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  const days = Math.floor(total / 86400);
+  const core = `${two(Math.floor((total % 86400) / 3600))}:${two(Math.floor((total % 3600) / 60))}:${two(total % 60)}`;
+  return days > 0 ? `${days}天 ${core}` : core;
+}
+
+function segmentInstant(market: MarketDef, parts: ZoneParts, minuteOfDay: number) {
+  const dayOffset = Math.floor(minuteOfDay / 1440);
+  const minute = minuteOfDay % 1440;
+  const cursor = new Date(Date.UTC(parts.year, parts.month - 1, parts.day + dayOffset));
+  return zonedPartsToDate(cursor.getUTCFullYear(), cursor.getUTCMonth() + 1, cursor.getUTCDate(), Math.floor(minute / 60), minute % 60, 0, 0, market.zone);
+}
+
+function nextOpenInstant(market: MarketDef, now: Date, parts: ZoneParts) {
+  const regulars = market.segments.filter((segment) => segment.kind === "regular");
+  const base = Date.UTC(parts.year, parts.month - 1, parts.day);
+  for (let i = 0; i < 10; i += 1) {
+    const cursor = new Date(base + i * 86400000);
+    const weekday = cursor.getUTCDay();
+    if (weekday === 0 || weekday === 6) continue;
+    for (const segment of regulars) {
+      const instant = zonedPartsToDate(cursor.getUTCFullYear(), cursor.getUTCMonth() + 1, cursor.getUTCDate(), Math.floor(segment.start / 60), segment.start % 60, 0, 0, market.zone);
+      if (instant.getTime() > now.getTime() + 500) return instant;
+    }
+  }
+  return now;
+}
+
+function computeMarket(market: MarketDef, now: Date) {
+  const parts = zoneParts(now, market.zone);
+  const minute = parts.hour * 60 + parts.minute;
+  const isWeekend = parts.weekday === 0 || parts.weekday === 6;
+  const regulars = market.segments.filter((segment) => segment.kind === "regular");
+  const extended = market.segments.filter((segment) => segment.kind !== "regular");
+  const current = market.segments.find((segment) => minute >= segment.start && minute < segment.end);
+
+  let phase: "open" | "pre" | "after" | "lunch" | "closed" = "closed";
+  let statusLabel = "已收盘";
+  let tone: "open" | "break" | "pre" | "closed" = "closed";
+  if (isWeekend) {
+    statusLabel = "周末休市";
+  } else if (current?.kind === "regular") {
+    phase = "open";
+    statusLabel = "交易中";
+    tone = "open";
+  } else if (current?.kind === "pre") {
+    phase = "pre";
+    statusLabel = "盘前";
+    tone = "pre";
+  } else if (current?.kind === "after") {
+    phase = "after";
+    statusLabel = "盘后";
+    tone = "pre";
+  } else if (minute < market.segments[0].start) {
+    phase = "pre";
+    statusLabel = "未开盘";
+    tone = "pre";
+  } else if (minute >= market.segments[market.segments.length - 1].end) {
+    phase = "after";
+  } else {
+    phase = "lunch";
+    statusLabel = "午间休市";
+    tone = "break";
+  }
+
+  const openInstant = segmentInstant(market, parts, regulars[0].start);
+  const closeInstant = segmentInstant(market, parts, regulars[regulars.length - 1].end);
+  const beijingOpen = formatInZone(openInstant, "Asia/Shanghai").slice(11, 16);
+  const beijingClose = formatInZone(closeInstant, "Asia/Shanghai").slice(11, 16);
+  const crossesDay = formatInZone(closeInstant, "Asia/Shanghai").slice(0, 10) !== formatInZone(openInstant, "Asia/Shanghai").slice(0, 10);
+
+  const targetKind: "open" | "close" = phase === "open" && current ? "close" : "open";
+  const target = targetKind === "close" && current ? segmentInstant(market, parts, current.end) : nextOpenInstant(market, now, parts);
+  const targetParts = zoneParts(target, market.zone);
+  const sameDay = targetParts.year === parts.year && targetParts.month === parts.month && targetParts.day === parts.day;
+  const targetLocal = formatInZone(target, market.zone).slice(11, 16);
+  const targetBeijing = formatInZone(target, "Asia/Shanghai").slice(11, 16);
+  const dayTag = sameDay ? "" : `${WEEKDAY_ZH[targetParts.weekday]} `;
+
+  return {
+    minute,
+    isWeekend,
+    statusLabel,
+    tone,
+    nowTime: hhmm(minute),
+    countdownLabel: targetKind === "close" ? "距收盘" : "距开盘",
+    countdownText: formatDuration(target.getTime() - now.getTime()),
+    targetText: `${dayTag}${targetLocal}${targetKind === "close" ? " 收盘" : " 开盘"}（北京时间 ${targetBeijing}）`,
+    openText: hhmm(regulars[0].start),
+    closeText: hhmm(regulars[regulars.length - 1].end),
+    beijingOpen,
+    beijingClose: `${beijingClose}${crossesDay ? "（次日）" : ""}`,
+    sessionText: regulars.map((segment) => `${hhmm(segment.start)} – ${hhmm(segment.end)}`).join(" · "),
+    footerLabel: extended.length ? (extended.every((segment) => segment.kind === "pre") ? "盘前" : extended.every((segment) => segment.kind === "after") ? "盘后" : "盘前 / 盘后") : "午间休市",
+    footerText: extended.length ? extended.map((segment) => `${hhmm(segment.start)} – ${hhmm(segment.end)}`).join(" · ") : market.gapText || "—",
+  };
+}
+
+function nthWeekdayOfMonth(year: number, month: number, weekday: number, nth: number) {
+  const first = new Date(Date.UTC(year, month - 1, 1));
+  const offset = (weekday - first.getUTCDay() + 7) % 7;
+  return 1 + offset + (nth - 1) * 7;
+}
+
+function usDstInfo(now: Date) {
+  const year = zoneParts(now, "America/New_York").year;
+  // DST: 2nd Sunday of March 02:00 EST (07:00 UTC) -> 1st Sunday of November 02:00 EDT (06:00 UTC).
+  const start = new Date(Date.UTC(year, 2, nthWeekdayOfMonth(year, 3, 0, 2), 7, 0, 0));
+  const end = new Date(Date.UTC(year, 10, nthWeekdayOfMonth(year, 11, 0, 1), 6, 0, 0));
+  const inDst = now.getTime() >= start.getTime() && now.getTime() < end.getTime();
+  const next = now.getTime() < start.getTime() ? start : inDst ? end : new Date(Date.UTC(year + 1, 2, nthWeekdayOfMonth(year + 1, 3, 0, 2), 7, 0, 0));
+  return { inDst, next, abbr: inDst ? "EDT" : "EST", offset: inDst ? "UTC-4" : "UTC-5" };
 }
