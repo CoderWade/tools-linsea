@@ -407,13 +407,3 @@ export function findStorageEntry(entries: StorageEntry[], target: string) {
   return found ? { entry: found, reason: `getter alias match: ${normalized} -> ${found.name}` } : { entry: null, reason: "" };
 }
 
-export async function rpcRequest(endpoint: string, method: string, params: unknown[]) {
-  const response = await fetch(endpoint, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ jsonrpc: "2.0", id: Date.now(), method, params }),
-  });
-  const payload = await response.json();
-  if (!response.ok || payload.error) throw new Error(payload.error?.message || "RPC request failed.");
-  return payload.result as string;
-}

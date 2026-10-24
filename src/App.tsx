@@ -25,13 +25,13 @@ import {
   findStorageEntry,
   keccak256Hex,
   mappingSlotByType,
-  normalizeAbiWord,
   parseMappingDeclaration,
   parseSlotIndex,
   parseSourceLayout,
-  rpcRequest,
   toSlotHex,
 } from "./lib/evm";
+import { CHAINS, CUSTOM_CHAIN_ID, chainSelectOptions, parseChainIdInput, resolveRpc, validateRpcSettings } from "./lib/chains";
+import { openRpcSession, rpcBatch, rpcRequest, type RpcSession } from "./lib/rpc";
 
 type CategoryId = "reverse" | "developer" | "general";
 type ToolId =
@@ -65,6 +65,9 @@ type Settings = {
   alchemyKey: string;
   infuraKey: string;
   defaultChain: string;
+  customRpcUrl: string;
+  customChainId: string;
+  customChainLabel: string;
   privacyMode: boolean;
 };
 
@@ -94,7 +97,7 @@ const tools: Tool[] = [
   { id: "market-clock", category: "general", name: "Market Clock", zh: "时间看盘", description: "Live Beijing / Hong Kong / New York clocks with US DST state and trading-session status for US, A-share, and HK markets.", keywords: ["market", "clock", "timezone", "trading", "dst", "开盘", "收盘", "夏令时", "冬令时", "美股", "港股", "A股", "时间"], badges: ["Live clock", "DST aware", "Trading hours"], icon: <Globe2 /> },
 ];
 
-const defaultSettings: Settings = { alchemyKey: "", infuraKey: "", defaultChain: "ethereum", privacyMode: false };
+const defaultSettings: Settings = { alchemyKey: "", infuraKey: "", defaultChain: "ethereum", customRpcUrl: "", customChainId: "", customChainLabel: "", privacyMode: false };
 
 export function App() {
   const boot = loadState();
@@ -205,6 +208,7 @@ export function App() {
             <div className="mb-2 flex flex-wrap gap-2 text-xs text-muted">
               <span className="rounded-full border border-line bg-surface px-2 py-1">{categoryLabel(activeTool.category, language)}</span>
               <span className="rounded-full border border-line bg-surface px-2 py-1">{activeTool.id}</span>
+              <span className="rounded-full border border-accent/35 bg-accent/10 px-2 py-1 text-accent">{chainSummary(settings)}</span>
             </div>
             <h1 className="text-4xl font-black tracking-normal text-text max-md:text-3xl">{language === "zh" ? activeTool.zh : activeTool.name}</h1>
             <p className="mt-2 max-w-3xl text-base text-muted">{activeTool.description}</p>
@@ -296,39 +300,74 @@ function StorageSlotInspector({ settings }: { settings: Settings }) {
   const [mappingKey, setMappingKey] = useState("");
   const [baseSlot, setBaseSlot] = useState("");
   const [scanLimit, setScanLimit] = useState("80");
+  const [busy, setBusy] = useState(false);
+  const [progress, setProgress] = useState("");
   const [output, setOutput] = useState<ReactNode>(<Notice>Enter a slot index or mapping probe parameters.</Notice>);
 
   const read = async () => {
+    setBusy(true);
+    setProgress("");
     try {
       if (settings.privacyMode) throw new Error("Privacy First Mode blocks RPC requests.");
       if (!/^0x[a-fA-F0-9]{40}$/.test(contract)) throw new Error("Enter a valid contract address.");
-      const endpoint = rpcEndpoint(settings);
-      if (!endpoint) throw new Error("Configure Alchemy or Infura key in Settings.");
+      const session = await openRpcSession(settings, blockTag);
       if (mode === "raw") {
         const slot = toSlotHex(slotIndex);
-        const raw = await rpcRequest(endpoint, "eth_getStorageAt", [contract, slot, blockTag || "latest"]);
-        setOutput(<RawStorageOutput contract={contract} blockTag={blockTag} slotIndex={slotIndex} slot={slot} raw={raw} decodeType={decodeType} />);
-      } else {
-        const layout = parseMappingDeclaration(declaration);
-        if (!layout) throw new Error("Enter a mapping declaration such as mapping(address => bool) public flags;");
-        if (!baseSlot) {
-          const max = Math.min(Math.max(Number(scanLimit) || 80, 0), 500);
-          const matches: Array<{ base: number; slot: string; raw: string }> = [];
-          for (let i = 0; i <= max; i += 1) {
-            const valueSlot = mappingSlotByType(mappingKey, layout.keyType, toSlotHex(BigInt(i)));
-            const raw = await rpcRequest(endpoint, "eth_getStorageAt", [contract, valueSlot, blockTag || "latest"]);
-            if (BigInt(raw) !== 0n) matches.push({ base: i, slot: valueSlot, raw });
-            if (matches.length >= 24) break;
-          }
-          setOutput(matches.length ? <MappingScanOutput matches={matches} /> : <Notice tone="warn">No non-zero candidate found. Zero/false cannot prove a mapping base slot.</Notice>);
-          return;
-        }
-        const valueSlot = mappingSlotByType(mappingKey, layout.keyType, toSlotHex(baseSlot));
-        const raw = await rpcRequest(endpoint, "eth_getStorageAt", [contract, valueSlot, blockTag || "latest"]);
-        setOutput(<MappingReadOutput baseSlot={baseSlot} valueSlot={valueSlot} raw={raw} valueType={layout.valueType} />);
+        const raw = await rpcRequest(session.endpoint, "eth_getStorageAt", [contract, slot, session.blockTag]);
+        setOutput(<RawStorageOutput contract={contract} session={session} slotIndex={slotIndex} slot={slot} raw={raw} decodeType={decodeType} />);
+        return;
       }
+
+      const layout = parseMappingDeclaration(declaration);
+      if (!layout) throw new Error("Enter a mapping declaration such as mapping(address => bool) public flags;");
+      if (baseSlot) {
+        const valueSlot = mappingSlotByType(mappingKey, layout.keyType, toSlotHex(baseSlot));
+        const raw = await rpcRequest(session.endpoint, "eth_getStorageAt", [contract, valueSlot, session.blockTag]);
+        setOutput(<MappingReadOutput baseSlot={baseSlot} valueSlot={valueSlot} raw={raw} valueType={layout.valueType} session={session} />);
+        return;
+      }
+
+      const max = scanLimitValue(scanLimit);
+      const matches: MappingMatch[] = [];
+      const failures: string[] = [];
+      let attempted = 0;
+      let scannedTo = -1;
+      const chunkSize = 20;
+      for (let start = 0; start <= max && matches.length < MAPPING_MATCH_LIMIT; start += chunkSize) {
+        const end = Math.min(start + chunkSize - 1, max);
+        setProgress(`Scanning base slots ${start}–${end} of 0–${max} against block ${session.blockNumber !== null ? `#${session.blockNumber}` : session.blockTag}…`);
+        const calls: Array<{ method: string; params: unknown[] }> = [];
+        for (let index = start; index <= end; index += 1) {
+          calls.push({ method: "eth_getStorageAt", params: [contract, mappingSlotByType(mappingKey, layout.keyType, toSlotHex(BigInt(index))), session.blockTag] });
+        }
+        attempted += calls.length;
+        const results = await rpcBatch(session.endpoint, calls, { fallbackToSequential: true });
+        results.forEach((result, index) => {
+          if (!result.ok) {
+            failures.push(result.error.message);
+            return;
+          }
+          if (BigInt(result.result) !== 0n) matches.push({ base: start + index, slot: String(calls[index].params[1]), raw: result.result });
+        });
+        scannedTo = end;
+      }
+
+      if (!matches.length && attempted > 0 && failures.length === attempted) {
+        throw new Error(`All ${attempted} storage reads failed: ${failures[0]}`);
+      }
+      setOutput(
+        <div className="grid gap-4">
+          <RpcProvenance session={session} />
+          {matches.length
+            ? <MappingScanOutput matches={matches} scannedTo={scannedTo} max={max} failures={failures.length} />
+            : <Notice tone="warn">{failures.length ? `${failures.length} of ${attempted} reads failed, so this scan is incomplete. ` : ""}No non-zero candidate found in base slots 0–${max}. Zero/false cannot prove a mapping base slot.</Notice>}
+        </div>,
+      );
     } catch (error) {
       setOutput(<Notice tone="danger">{(error as Error).message}</Notice>);
+    } finally {
+      setBusy(false);
+      setProgress("");
     }
   };
 
@@ -360,7 +399,8 @@ function StorageSlotInspector({ settings }: { settings: Settings }) {
               <Notice tone="warn">A scan is evidence, not proof. If the expected value is false/zero, chain storage cannot distinguish it from an unset key.</Notice>
             </>
           )}
-          <Button variant="primary" onClick={read}>Read storage</Button>
+          {busy && progress ? <Notice>{progress}</Notice> : null}
+          <Button variant="primary" onClick={read} disabled={busy}>{busy ? "Reading…" : "Read storage"}</Button>
         </div>
       </Panel>
       <Panel title="Readout">{output}</Panel>
@@ -368,16 +408,33 @@ function StorageSlotInspector({ settings }: { settings: Settings }) {
   );
 }
 
-function RawStorageOutput({ contract, blockTag, slotIndex, slot, raw, decodeType }: { contract: string; blockTag: string; slotIndex: string; slot: string; raw: string; decodeType: string }) {
+type MappingMatch = { base: number; slot: string; raw: string };
+
+const MAPPING_MATCH_LIMIT = 24;
+
+function RpcProvenance({ session }: { session: RpcSession }) {
+  return (
+    <div className="grid grid-cols-2 gap-3 max-sm:grid-cols-1">
+      <Metric label="Chain" value={session.chain.label} hint={`chainId ${session.chain.chainId} · verified via eth_chainId`} />
+      <Metric label="Block" value={session.blockNumber !== null ? `#${session.blockNumber}` : session.blockTag} hint={`${session.sourceLabel} · ${session.host}`} />
+    </div>
+  );
+}
+
+function RawStorageOutput({ contract, session, slotIndex, slot, raw, decodeType }: { contract: string; session: RpcSession; slotIndex: string; slot: string; raw: string; decodeType: string }) {
   return (
     <div className="grid gap-4">
+      <RpcProvenance session={session} />
       <div className="grid grid-cols-2 gap-3 max-sm:grid-cols-1">
         <Metric label="Raw slot" value={slotIndex || String(parseSlotIndex(slot))} />
         <Metric label="RPC method" value="eth_getStorageAt" />
       </div>
       <ResultRows rows={[
         ["Contract", contract],
-        ["Block tag", blockTag],
+        ["Chain", `${session.chain.label} (${session.chain.chainId})`],
+        ["RPC source", `${session.sourceLabel} · ${session.host}`],
+        ["Block requested", session.requestedBlockTag],
+        ["Block read", session.blockNumber !== null ? `#${session.blockNumber} (${session.blockTag})` : session.blockTag],
         ["Slot hex", slot],
         ["Raw bytes32", raw],
         [`Decoded ${decodeType}`, decodeStorageValue(raw, decodeType)],
@@ -388,12 +445,35 @@ function RawStorageOutput({ contract, blockTag, slotIndex, slot, raw, decodeType
   );
 }
 
-function MappingReadOutput({ baseSlot, valueSlot, raw, valueType }: { baseSlot: string; valueSlot: string; raw: string; valueType: string }) {
-  return <ResultRows rows={[["Base slot", `#${parseSlotIndex(baseSlot).toString()}`], ["Value slot", valueSlot], ["Raw bytes32", raw], [`Decoded ${valueType}`, decodeStorageValue(raw, valueType)]]} />;
+function MappingReadOutput({ baseSlot, valueSlot, raw, valueType, session }: { baseSlot: string; valueSlot: string; raw: string; valueType: string; session: RpcSession }) {
+  return (
+    <div className="grid gap-4">
+      <RpcProvenance session={session} />
+      <ResultRows rows={[
+        ["Chain", `${session.chain.label} (${session.chain.chainId})`],
+        ["Block read", session.blockNumber !== null ? `#${session.blockNumber}` : session.blockTag],
+        ["Base slot", `#${parseSlotIndex(baseSlot).toString()}`],
+        ["Value slot", valueSlot],
+        ["Raw bytes32", raw],
+        [`Decoded ${valueType}`, decodeStorageValue(raw, valueType)],
+      ]} />
+    </div>
+  );
 }
 
-function MappingScanOutput({ matches }: { matches: Array<{ base: number; slot: string; raw: string }> }) {
-  return <div className="grid gap-3">{matches.map((match) => <div key={match.base} className="rounded-2xl border border-line bg-panel p-3"><div className="font-black text-accent">Base slot #{match.base}</div><div className="mt-2 break-all font-mono text-xs text-muted">{match.slot}</div><div className="mt-2 break-all font-mono text-xs text-text">{match.raw}</div></div>)}</div>;
+function MappingScanOutput({ matches, scannedTo, max, failures }: { matches: MappingMatch[]; scannedTo: number; max: number; failures: number }) {
+  return (
+    <div className="grid gap-4">
+      <ResultRows rows={[
+        ["Scanned", `base slots 0–${scannedTo} of 0–${max}`],
+        ["Non-zero matches", String(matches.length)],
+        ["Failed reads", String(failures)],
+        ["Stopped early", matches.length >= MAPPING_MATCH_LIMIT ? `${MAPPING_MATCH_LIMIT} match limit reached` : "scan range exhausted"],
+      ]} />
+      <div className="grid gap-3">{matches.map((match) => <div key={match.base} className="rounded-2xl border border-line bg-panel p-3"><div className="font-black text-accent">Base slot #{match.base}</div><div className="mt-2 break-all font-mono text-xs text-muted">{match.slot}</div><div className="mt-2 break-all font-mono text-xs text-text">{match.raw}</div></div>)}</div>
+      {failures ? <Notice tone="warn">{failures} storage reads failed; treat this scan as incomplete.</Notice> : null}
+    </div>
+  );
 }
 
 function SourceLayoutResolver() {
@@ -1008,22 +1088,33 @@ function ProxySlotFinder({ settings }: { settings: Settings }) {
   const probe = async () => {
     try {
       if (settings.privacyMode) throw new Error("Privacy First Mode blocks RPC.");
-      const endpoint = rpcEndpoint(settings);
-      if (!endpoint) throw new Error("Configure Alchemy or Infura key.");
+      if (!/^0x[a-fA-F0-9]{40}$/.test(address)) throw new Error("Enter a valid proxy address.");
+      const session = await openRpcSession(settings, "latest");
       const implementationSlot = eip1967Slot("eip1967.proxy.implementation");
       const adminSlot = eip1967Slot("eip1967.proxy.admin");
       const beaconSlot = eip1967Slot("eip1967.proxy.beacon");
-      const [implementation, admin, beacon] = await Promise.all([
-        rpcRequest(endpoint, "eth_getStorageAt", [address, implementationSlot, "latest"]),
-        rpcRequest(endpoint, "eth_getStorageAt", [address, adminSlot, "latest"]),
-        rpcRequest(endpoint, "eth_getStorageAt", [address, beaconSlot, "latest"]),
-      ]);
-      setOutput(<ResultRows rows={[["Implementation slot", implementationSlot], ["Implementation", storageAddress(implementation) || "not set"], ["Admin", storageAddress(admin) || "not set"], ["Beacon", storageAddress(beacon) || "not set"]]} />);
+      const results = await rpcBatch(session.endpoint, [implementationSlot, adminSlot, beaconSlot].map((slot) => ({ method: "eth_getStorageAt", params: [address, slot, session.blockTag] })), { fallbackToSequential: true });
+      const failed = results.find((result) => !result.ok);
+      if (failed && !failed.ok) throw new Error(failed.error.message);
+      const [implementation, admin, beacon] = results.map((result) => (result.ok ? result.result : "0x0"));
+      setOutput(
+        <div className="grid gap-4">
+          <RpcProvenance session={session} />
+          <ResultRows rows={[
+            ["Chain", `${session.chain.label} (${session.chain.chainId})`],
+            ["Block read", session.blockNumber !== null ? `#${session.blockNumber}` : session.blockTag],
+            ["Implementation slot", implementationSlot],
+            ["Implementation", storageAddress(implementation) || "not set"],
+            ["Admin", storageAddress(admin) || "not set"],
+            ["Beacon", storageAddress(beacon) || "not set"],
+          ]} />
+        </div>,
+      );
     } catch (error) {
       setOutput(<Notice tone="danger">{(error as Error).message}</Notice>);
     }
   };
-  return <Workbench><Panel title="Proxy"><div className="grid gap-4"><Field label="Proxy address"><Input className="mono" value={address} onChange={(e) => setAddress(e.target.value)} placeholder="0x..." /></Field><Button variant="primary" onClick={probe}>Probe proxy slots</Button></div></Panel><Panel title="Readout">{output}</Panel></Workbench>;
+  return <Workbench><Panel title="Proxy"><div className="grid gap-4"><Field label="Proxy address"><Input className="mono" value={address} onChange={(e) => setAddress(e.target.value)} placeholder="0x..." /></Field><Notice>Probes ERC-1967 implementation, admin, and beacon slots on the selected chain. Results always show the chainId and block that was read.</Notice><Button variant="primary" onClick={probe}>Probe proxy slots</Button></div></Panel><Panel title="Readout">{output}</Panel></Workbench>;
 }
 
 function EncryptionTool() {
@@ -1063,7 +1154,46 @@ function Metric({ label, value, hint }: { label: string; value: ReactNode; hint?
 function SettingsModal({ open, settings, onClose, onSave }: { open: boolean; settings: Settings; onClose: () => void; onSave: (settings: Settings) => void }) {
   const [draft, setDraft] = useState(settings);
   useEffect(() => setDraft(settings), [settings, open]);
-  return <Modal open={open} title="Settings" description="API keys and preferences are stored in this browser only." onClose={onClose}><div className="grid gap-4"><Field label="Alchemy API Key"><Input type="password" value={draft.alchemyKey} onChange={(e) => setDraft({ ...draft, alchemyKey: e.target.value })} placeholder="Optional BYOK key" /></Field><Field label="Infura API Key"><Input type="password" value={draft.infuraKey} onChange={(e) => setDraft({ ...draft, infuraKey: e.target.value })} placeholder="Optional BYOK key" /></Field><Field label="Default chain"><Select value={draft.defaultChain} onChange={(value) => setDraft({ ...draft, defaultChain: value })} options={[{ value: "ethereum", label: "Ethereum Mainnet" }, { value: "sepolia", label: "Sepolia" }, { value: "polygon", label: "Polygon" }, { value: "bsc", label: "BNB Smart Chain" }]} /></Field><label className="flex items-center justify-between gap-4 rounded-2xl border border-line bg-panel p-4"><span><strong className="block text-sm text-text">Privacy First Mode</strong><small className="text-muted">Disable third-party requests, ads, RPC, and remote lookups.</small></span><input type="checkbox" checked={draft.privacyMode} onChange={(e) => setDraft({ ...draft, privacyMode: e.target.checked })} /></label><Button variant="primary" onClick={() => { onSave(draft); onClose(); }}>Save preferences</Button></div></Modal>;
+  const isCustom = draft.defaultChain === CUSTOM_CHAIN_ID;
+  const validationError = validateRpcSettings(draft);
+  const preview = (() => {
+    if (validationError) return null;
+    try {
+      return resolveRpc(draft);
+    } catch {
+      return null;
+    }
+  })();
+  return (
+    <Modal open={open} title="Settings" description="API keys and preferences are stored in this browser only." onClose={onClose}>
+      <div className="grid gap-4">
+        <Field label="Default chain"><Select value={draft.defaultChain} onChange={(value) => setDraft({ ...draft, defaultChain: value })} options={chainSelectOptions()} /></Field>
+        {isCustom ? (
+          <div className="grid grid-cols-2 gap-3 max-sm:grid-cols-1">
+            <Field label="Custom chain ID"><Input className="mono" value={draft.customChainId} onChange={(e) => setDraft({ ...draft, customChainId: e.target.value })} placeholder="6714" /></Field>
+            <Field label="Custom chain label"><Input value={draft.customChainLabel} onChange={(e) => setDraft({ ...draft, customChainLabel: e.target.value })} placeholder="optional" /></Field>
+          </div>
+        ) : null}
+        <Field label="RPC URL override">
+          <Input className="mono" value={draft.customRpcUrl} onChange={(e) => setDraft({ ...draft, customRpcUrl: e.target.value })} placeholder={chainByIdOrDefault(draft.defaultChain)?.rpcUrl || "https://rpc.example.org"} />
+        </Field>
+        {preview ? (
+          <Notice tone="ok">Reads will use <strong>{preview.sourceLabel}</strong> at <code>{preview.host}</code>, expected chainId <strong>{preview.chain.chainId}</strong>. Every read verifies eth_chainId first.</Notice>
+        ) : validationError ? (
+          <Notice tone="warn">{validationError}</Notice>
+        ) : (
+          <Notice tone="warn">This chain has no bundled public RPC. Add a non-empty RPC URL override to read it directly from the browser.</Notice>
+        )}
+        <div className="grid grid-cols-2 gap-3 max-sm:grid-cols-1">
+          <Field label="Alchemy API Key"><Input type="password" value={draft.alchemyKey} onChange={(e) => setDraft({ ...draft, alchemyKey: e.target.value })} placeholder="Optional BYOK key" /></Field>
+          <Field label="Infura API Key"><Input type="password" value={draft.infuraKey} onChange={(e) => setDraft({ ...draft, infuraKey: e.target.value })} placeholder="Optional BYOK key" /></Field>
+        </div>
+        <Notice>Endpoint priority: RPC URL override → bundled public RPC → Alchemy key → Infura key. A provider key is never used on a chain it does not serve.</Notice>
+        <label className="flex items-center justify-between gap-4 rounded-2xl border border-line bg-panel p-4"><span><strong className="block text-sm text-text">Privacy First Mode</strong><small className="text-muted">Disable third-party requests, ads, RPC, and remote lookups.</small></span><input type="checkbox" checked={draft.privacyMode} onChange={(e) => setDraft({ ...draft, privacyMode: e.target.checked })} /></label>
+        <Button variant="primary" onClick={() => { onSave(draft); onClose(); }} disabled={Boolean(validationError)}>Save preferences</Button>
+      </div>
+    </Modal>
+  );
 }
 
 function CommandPalette({ open, query, setQuery, language, onClose, onSelect }: { open: boolean; query: string; setQuery: (value: string) => void; language: "en" | "zh"; onClose: () => void; onSelect: (id: ToolId) => void }) {
@@ -1097,16 +1227,25 @@ function categoryLabel(id: CategoryId, lang: "en" | "zh") {
   const category = categories.find((item) => item.id === id);
   return category ? (lang === "zh" ? category.zh : category.name) : id;
 }
-function rpcEndpoint(settings: Settings) {
-  if (settings.alchemyKey) {
-    const chain = settings.defaultChain === "polygon" ? "polygon-mainnet" : settings.defaultChain === "bsc" ? "bnb-mainnet" : settings.defaultChain === "sepolia" ? "eth-sepolia" : "eth-mainnet";
-    return `https://${chain}.g.alchemy.com/v2/${settings.alchemyKey}`;
+function chainSummary(settings: Settings) {
+  if (settings.defaultChain === CUSTOM_CHAIN_ID) {
+    const label = settings.customChainLabel.trim() || "Custom chain";
+    try {
+      return `${label} · ${parseChainIdInput(settings.customChainId)}`;
+    } catch {
+      return `${label} · chainId missing`;
+    }
   }
-  if (settings.infuraKey) {
-    const chain = settings.defaultChain === "sepolia" ? "sepolia" : "mainnet";
-    return `https://${chain}.infura.io/v3/${settings.infuraKey}`;
-  }
-  return "";
+  const chain = CHAINS.find((item) => item.id === settings.defaultChain);
+  return chain ? `${chain.shortLabel} · ${chain.chainId}` : `Unknown chain · ${settings.defaultChain}`;
+}
+function chainByIdOrDefault(id: string) {
+  return CHAINS.find((item) => item.id === id);
+}
+function scanLimitValue(input: string) {
+  const parsed = Number(input);
+  if (!Number.isInteger(parsed) || parsed < 0) return 80;
+  return Math.min(parsed, 500);
 }
 function eip1967Slot(name: string) {
   return toSlotHex(BigInt(`0x${keccak256Hex(name)}`) - 1n);

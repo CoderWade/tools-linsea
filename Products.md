@@ -69,8 +69,12 @@ Linsea Tools 是一个面向 Web3 逆向安全、通用开发、跨境运营与�
 
 联网策略：
 
-- 用户未配置 BYOK 时，通过 `/api/rpc` 代理读取。
-- 用户配置 BYOK 时，前端可直接请求用户自己的 Alchemy / Infura endpoint。
+- 端点优先级固定为：RPC URL override → 链内置公共 RPC → Alchemy BYOK → Infura BYOK。
+- 链内置公共 RPC 目前仅 Anubis Mainnet（chainId 6714，`https://rpc.anubispace.org`），无需 API Key。
+- Provider key 只用于该 provider 实际提供服务的链；不匹配时明确报错，不再静默回落到以太坊主网。
+- 每次读取前调用 `eth_chainId` 校验所选链；不匹配立即中止，避免产出错链证据。
+- `latest` 读取前先解析为具体区块号，输出中固定展示 chainId、端点主机与区块高度。
+- mapping 扫描走 JSON-RPC batch（每片 20 条），端点不支持 batch 时自动降级为串行。
 - 纯本地模式开启时，只允许计算 slot，不发起 RPC 请求。
 
 #### 5.1.2 Source Layout Resolver
@@ -372,8 +376,9 @@ Linsea Tools 是一个面向 Web3 逆向安全、通用开发、跨境运营与�
 
 - Alchemy API Key。
 - Infura API Key。
-- 默认 Chain。
+- 默认 Chain（Ethereum / Sepolia / Polygon / BSC / Anubis / Custom EVM chain）。
 - RPC Endpoint override。
+- Custom chain：chainId + 可选链名，配合 RPC override 使用。
 - Privacy First Mode。
 - Theme：System / Light / Dark。
 - Language：中文 / English。
