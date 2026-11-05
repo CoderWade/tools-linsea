@@ -2,12 +2,24 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
+    <!-- Resolve the stored theme before first paint, otherwise the dark default
+         flashes light for users who picked dark. Keep this tiny and synchronous. -->
+    <script>
+      try {
+        var saved = JSON.parse(localStorage.getItem("linsea-react-state") || "{}");
+        if (saved.theme !== "light") document.documentElement.classList.add("dark");
+      } catch (e) {
+        document.documentElement.classList.add("dark");
+      }
+    </script>
+
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta
       name="description"
       content="Linsea Tools: a privacy-first toolbox for Web3 security, developers, commerce operations, and risk testing."
     />
-    <meta name="theme-color" content="#080B12" />
+    <meta name="theme-color" content="#0d1117" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#f4f6f9" media="(prefers-color-scheme: light)" />
     <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
     <title>Linsea Tools</title>
   </head>

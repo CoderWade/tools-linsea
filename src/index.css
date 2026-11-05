@@ -2,32 +2,88 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ==========================================================================
+   Design tokens
+
+   Light and dark are tuned independently: every token name resolves to a
+   value that keeps its contrast on its own background.
+
+   Four layers, one job each. A colour is never asked to mean two things:
+
+     neutral   canvas / surface / panel / line / text / muted / faint
+               Tinted rather than pure grey, so the page has a hue without
+               spending any saturation budget on decoration.
+     action    accent (+ accent-fg)
+               Interactive affordances only: buttons, focus rings, links,
+               the selected tab. Never a panel border, never a shadow.
+     identity  family-reverse / family-dev / family-general
+               Which section a tool belongs to. Only ever a rail stripe,
+               a tool icon, or a category chip.
+     state     ok / warn / danger
+               What a result means. Always paired with an icon or a word.
+
+   Hard rules that keep this from drifting back into decorative colour:
+     - no gradients
+     - no coloured shadows
+     - no large coloured fills
+     - coloured pixels should stay near 5% of any screen
+
+   Surfaces are layered, not translucent:
+     canvas  page background
+     surface cards and panels
+     panel   inset controls inside a card
+   ========================================================================== */
+
 :root {
   color-scheme: light;
-  --canvas: 206 48% 96%;
-  --surface: 205 58% 99%;
-  --panel: 204 52% 94%;
-  --text: 217 38% 14%;
-  --muted: 215 20% 43%;
-  --faint: 215 16% 62%;
-  --line: 207 39% 87%;
-  --accent: 203 82% 43%;
-  --cyan: 184 78% 42%;
-  --shadow: 211 45% 30%;
+
+  --canvas: 220 22% 97%;
+  --surface: 0 0% 100%;
+  --panel: 220 24% 96%;
+
+  --text: 222 30% 14%;
+  --muted: 220 13% 42%;
+  --faint: 220 10% 45%;
+  --line: 220 16% 85%;
+
+  --accent: 221 83% 46%;
+  --accent-fg: 0 0% 100%;
+
+  --family-reverse: 262 55% 46%;
+  --family-dev: 183 90% 26%;
+  --family-general: 220 10% 45%;
+
+  --ok: 158 62% 29%;
+  --warn: 28 90% 35%;
+  --danger: 356 66% 44%;
+
+  --shadow: 222 45% 30%;
 }
 
 .dark {
   color-scheme: dark;
-  --canvas: 216 39% 6%;
-  --surface: 216 31% 10%;
-  --panel: 215 33% 13%;
-  --text: 207 52% 94%;
-  --muted: 211 21% 67%;
-  --faint: 212 18% 49%;
-  --line: 210 30% 21%;
-  --accent: 203 91% 67%;
-  --cyan: 181 72% 60%;
-  --shadow: 220 60% 2%;
+
+  --canvas: 222 26% 6.5%;
+  --surface: 222 20% 10.5%;
+  --panel: 222 22% 8.5%;
+
+  --text: 214 26% 94%;
+  --muted: 216 14% 67%;
+  --faint: 216 12% 54%;
+  --line: 222 15% 24%;
+
+  --accent: 217 90% 70%;
+  --accent-fg: 222 40% 7%;
+
+  --family-reverse: 262 60% 68%;
+  --family-dev: 180 45% 52%;
+  --family-general: 216 12% 54%;
+
+  --ok: 158 50% 52%;
+  --warn: 36 85% 63%;
+  --danger: 356 75% 68%;
+
+  --shadow: 222 60% 2%;
 }
 
 * {
@@ -37,6 +93,8 @@
 html {
   min-height: 100%;
   background: hsl(var(--canvas));
+  scrollbar-width: thin;
+  scrollbar-color: hsl(var(--line)) transparent;
 }
 
 body {
@@ -44,106 +102,38 @@ body {
   min-height: 100vh;
   margin: 0;
   overflow-x: hidden;
+  background: hsl(var(--canvas));
   color: hsl(var(--text));
-  background:
-    linear-gradient(hsl(var(--accent) / 0.045) 1px, transparent 1px),
-    linear-gradient(90deg, hsl(var(--accent) / 0.045) 1px, transparent 1px),
-    linear-gradient(118deg, hsl(var(--cyan) / 0.1), transparent 28%, hsl(var(--accent) / 0.08) 72%, transparent),
-    hsl(var(--canvas));
-  background-attachment: fixed;
-  background-size: 32px 32px, 32px 32px, auto, auto;
-  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
 ::selection {
-  background: hsl(var(--accent) / 0.24);
+  background: hsl(var(--accent) / 0.22);
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: hsl(var(--line));
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--faint));
+  background-clip: content-box;
 }
 
 @layer components {
-  .front-canvas {
-    position: relative;
-    isolation: isolate;
-  }
-
-  .front-canvas::before {
-    content: "";
-    position: fixed;
-    z-index: -1;
-    inset: 0 0 0 276px;
-    pointer-events: none;
-    background:
-      linear-gradient(180deg, hsl(var(--surface) / 0.42), transparent 34rem),
-      linear-gradient(90deg, hsl(var(--accent) / 0.08), transparent 18rem),
-      linear-gradient(hsl(var(--accent) / 0.035) 1px, transparent 1px),
-      linear-gradient(90deg, hsl(var(--accent) / 0.035) 1px, transparent 1px);
-    background-size: auto, auto, 32px 32px, 32px 32px;
-    mask-image: linear-gradient(90deg, transparent, black 4rem, black);
-  }
-
-  .tech-card {
-    position: relative;
-    overflow: hidden;
-    background-color: hsl(var(--surface) / 0.78);
-    @apply rounded-tool border border-line shadow-soft backdrop-blur-xl;
-  }
-
-  .tech-card::before {
-    content: "";
-    position: absolute;
-    inset: 0;
-    pointer-events: none;
-    background:
-      linear-gradient(135deg, hsl(var(--accent) / 0.08), transparent 42%),
-      linear-gradient(hsl(var(--accent) / 0.035) 1px, transparent 1px),
-      linear-gradient(90deg, hsl(var(--accent) / 0.03) 1px, transparent 1px);
-    background-size: auto, 28px 28px, 28px 28px;
-  }
-
-  .tech-card > * {
-    position: relative;
-  }
-
-  .tech-gradient-border {
-    position: relative;
-  }
-
-  .tech-gradient-border::before {
-    content: "";
-    position: absolute;
-    inset: -1px;
-    z-index: -1;
-    border-radius: inherit;
-    background: linear-gradient(135deg, hsl(var(--accent) / 0.42), hsl(var(--cyan) / 0.18), transparent 55%);
-  }
-
   .mono {
     @apply font-mono;
-  }
-
-  .panel-surface {
-    position: relative;
-    isolation: isolate;
-    background:
-      linear-gradient(180deg, hsl(var(--surface) / 0.76), hsl(var(--panel) / 0.52)),
-      linear-gradient(135deg, hsl(var(--accent) / 0.08), transparent 48%),
-      linear-gradient(hsl(var(--accent) / 0.035) 1px, transparent 1px),
-      linear-gradient(90deg, hsl(var(--accent) / 0.03) 1px, transparent 1px);
-    background-size: auto, auto, 28px 28px, 28px 28px;
-  }
-
-  .panel-surface::after {
-    content: "";
-    position: absolute;
-    inset: 0;
-    z-index: -1;
-    border-radius: inherit;
-    background: linear-gradient(180deg, hsl(var(--cyan) / 0.08), transparent 46%);
-  }
-}
-
-@media (max-width: 1024px) {
-  .front-canvas::before {
-    left: 0;
-    mask-image: none;
   }
 }
