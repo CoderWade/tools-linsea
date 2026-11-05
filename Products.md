@@ -1,844 +1,603 @@
 # Linsea Tools 产品文档
 
-## 1. 产品定位
+[English](#english) · [中文](#中文)
 
-Linsea Tools 是一个面向 Web3 逆向安全、通用开发、跨境运营与风控测试场景的高密度在线工具箱。产品目标是把 CyberChef 式的“输入即处理”、Linear/Vercel 式的极简专业界面，以及 Web3 安全工程师常用的链上调试能力整合在一个轻量、快速、隐私优先的应用中。
+> 本文档描述**当前分支实际实现的内容**。所有标记为「未实现」的功能都是规划，不属于当前产品。
+>
+> This document describes **what is actually implemented on this branch**. Anything marked "Not built" is a plan, not part of the current product.
 
-核心关键词：
+---
 
-- 极简：少装饰、强层级、低干扰。
-- 高信息密度：工具结果、参数、上下文尽量同屏呈现。
-- 硬核专业感：代码友好、键盘优先、可复制、可追溯。
-- Privacy First：默认尽可能本地执行，联网能力必须可解释、可关闭。
+## 中文
 
-## 2. 目标用户
+### 1. 产品定位
 
-- Web3 安全研究员：需要快速查看 storage slot、代理实现地址、calldata、bytecode、selector。
-- Solidity / 后端 / 全栈开发者：需要 JSON、时间戳、文本对比、Hash、编码转换等日常工具。
-- 跨境运营人员：需要利润测算、文本清洗、白底图处理、物流查询入口。
-- 支付与风控测试人员：需要 Luhn 校验、BIN 查询与合规 sandbox 卡号生成。
+面向 Web3 逆向安全与日常开发的**单页工具箱**。打开即用，不做落地页。
 
-## 3. 产品原则
+一句话：把「查一个存储槽」「解一段 calldata」「转一个时间戳」这类高频小操作，压缩到一次打开、输入、复制之内完成。
 
-1. 本地优先：凡是不需要链上节点、远端字典或第三方接口的功能，必须在浏览器本地完成。
-2. 只读链上：内置 RPC 代理只允许只读 RPC 方法，不提供签名、发交易或私钥输入能力。
-3. 可解释输出：关键计算结果必须展示公式、来源、原始值与复制入口。
-4. 工具即页面：首屏直接进入工具工作台，不做营销落地页。
-5. 键盘优先：全局搜索、工具切换、复制、格式化等高频动作支持快捷键。
-6. 合规边界明确：支付卡工具只服务测试和校验，不支持真实卡生成、撞库、绕风控。
+### 2. 目标用户
 
-## 4. 信息架构
+| 用户 | 典型动作 |
+|---|---|
+| Web3 安全研究员 | 读存储槽、定位 mapping 基础槽位、探测代理实现地址、拆解 calldata |
+| Solidity / 全栈开发者 | 算 selector、转单位、格式化 JSON、比对文本、换算进制 |
+| 通用使用者 | 看盘、换算时间戳 |
 
-### 4.1 顶层导航
+### 3. 产品原则
 
-- Reverse Security：逆向安全与链上调试。
-- Developer：通用开发工具。
-- Commerce：跨境运营工具。
-- Risk Testing：风控测试工具。
-- Settings：全局设置。
+1. **工具即页面**：首屏直接是工作台，没有 hero、没有宣传区。
+2. **本地优先**：能在浏览器算的绝不上传。全部 15 个工具中，只有存储槽检查器、代理槽探测器与合约调用读取会发出网络请求。
+3. **只读**：不签名、不发交易、不接受私钥。整个应用没有任何写链能力。
+4. **结论可复查**：每次链上读取都固定输出 chainId、端点主机与确切区块号，任何结果都能事后复现。
+5. **一个颜色一个含义**：配色系统的硬约束，详见第 6 节。
 
-### 4.2 全局能力
+### 4. 信息架构
 
-- Cmd + K / Ctrl + K 全局命令面板。
-- 中英双语切换。
-- 明暗主题切换。
-- 纯本地模式。
-- BYOK：用户自带 Alchemy / Infura API Key。
-- 最近使用工具。
-- 收藏工具。
-- 一键复制结果。
-- 输入输出样例。
-- 工具状态提示：Local Only、Network Required、Privacy Sensitive、Experimental。
+四个分区，共 15 个工具：
 
-## 5. 功能模块
+| 分区 | 工具数 | 工具 |
+|---|---|---|
+| 逆向安全 Reverse Security | 7 | 存储槽检查器、源码槽位解析器、代理槽探测器、合约调用读取、Calldata 解码器、单位转换器、4Byte / Selector 查询 |
+| 编码与密码 Encoding & Crypto | 4 | 编码与哈希套件、对称加密、JWT 检查器、进制转换器 |
+| 通用开发 Developer | 3 | JSON 工作台、时间戳工具、文本对比 |
+| 通用工具 General Tools | 1 | 时间看盘 |
 
-### 5.1 逆向安全
+分区的划分依据是**任务类型**，不是工具的技术难度：需要理解合约状态的留在逆向安全，纯粹的编码/密码学/数制换算归入编码与密码。
 
-#### 5.1.1 Storage Slot Inspector
+分区用颜色区分（紫 / 青 / 中性灰），但颜色只出现在四个位置：左栏竖条、工具列表图标、分类 chip、命令面板图标。编码与密码复用青色；通用开发与通用工具都用中性色，避免为"兜底"分区再消耗一个色相。
 
-目标：查看与计算 EVM 合约存储槽，专注于原始 slot 读取与 mapping 定位。
+### 5. 功能模块（全部已实现）
 
-核心功能：
+#### 5.1 存储槽检查器 Storage Slot Inspector
 
-- 标准 slot 计算：输入 slot index，输出 32-byte slot key。
-- mapping slot 计算：输入 key、value type、base slot，计算 `keccak256(abi.encode(key, slot))`。
-- 地址、uint、bytes32、bool 等常见类型输入校验。
-- 支持调用 `eth_getStorageAt` 读取链上值。
-- 输出原始 hex、uint256、address、bool、bytes32 多种解释视图。
-- constant / immutable 明确提示：不占用 storage slot。
+两种模式：
 
-联网策略：
+- **原始槽位读取**：输入合约地址 + 槽位序号（十进制或 `0x`），通过 `eth_getStorageAt` 读一个 32 字节字。输出原始 bytes32、按 `bytes32` / `bool` / `uint256` / `int256` / `address` 解码的视图、uint256 十进制值。
+- **mapping 探测**：输入 mapping 声明（如 `mapping(address => bool) public _feeWhiteList;`）+ 键值。已知基础槽位时直接计算 `keccak256(abi.encode(key, slot))` 读单槽；未知时按范围扫描基础槽位，报告所有非零命中。
 
-- 端点优先级固定为：RPC URL override → 链内置公共 RPC → Alchemy BYOK → Infura BYOK。
-- 链内置公共 RPC 目前仅 Anubis Mainnet（chainId 6714，`https://rpc.anubispace.org`），无需 API Key。
-- Provider key 只用于该 provider 实际提供服务的链；不匹配时明确报错，不再静默回落到以太坊主网。
-- 每次读取前调用 `eth_chainId` 校验所选链；不匹配立即中止，避免产出错链证据。
-- `latest` 读取前先解析为具体区块号，输出中固定展示 chainId、端点主机与区块高度。
-- mapping 扫描走 JSON-RPC batch（每片 20 条），端点不支持 batch 时自动降级为串行。
-- 纯本地模式开启时，只允许计算 slot，不发起 RPC 请求。
+实现约束：
 
-#### 5.1.2 Source Layout Resolver
+- 扫描每片 20 条走 JSON-RPC batch，端点不支持时降级串行。
+- 命中上限 24 条，扫描范围上限 500 个槽位。
+- **扫描结果是线索不是证明**：值为 `false` 或 `0` 时，链上存储无法区分「值为零」与「从未写入」，UI 明确提示这一点。
 
-目标：把已验证源码或反编译源码中的状态变量、getter 名解析成 storage slot / byte offset。
+#### 5.2 源码槽位解析器 Source Layout Resolver
 
-核心功能：
+粘贴已验证 Solidity 源码或 Dedaub 反编译源码，把变量名或 getter 名解析为存储槽位与字节偏移。
 
-- 支持粘贴 verified Solidity source。
-- 支持粘贴 Dedaub 反编译源码。
-- 支持 `storageLayout` JSON 作为精确输入。
-- 输入状态变量名或 getter 名，定位其对应 slot。
-- 对 mapping 支持 key -> value slot 推导。
-- 对 constant / immutable 明确提示为不占用 storage slot。
-- 输出变量名、类型、slot、offset 与读槽建议。
+- 只统计顶层状态变量，函数体跳过。
+- 支持多合约文件，指定合约名后解析该合约布局。
+- mapping 类型支持输入键值推导值槽位。
+- `constant` / `immutable` 明确标注为不占用存储槽。
 
-说明：
+#### 5.3 代理槽探测器 Proxy Slot Finder
 
-- 已验证合约优先贴源码。
-- 未验证合约可贴反编译结果做 best-effort 解析。
-- 解析完成后，再回到 Storage Slot Inspector 读取链上原始值。
+一次 batch 读取 ERC-1967 的三个槽位：implementation、admin、beacon。输出链名、chainId、读取区块与槽位原始值。
 
-#### 5.1.3 Proxy Slot Finder
+#### 5.4 合约调用读取 Read Contract (eth_call)
 
-目标：一键探测代理合约实现地址。
+目标：按函数签名调用任意 view / pure 函数，并解码返回值；支持同一调用在多个区块的对比。
 
-支持标准：
+流程：
 
-- ERC-1967 implementation slot。
-- ERC-1967 admin slot。
-- ERC-1967 beacon slot。
-- Beacon proxy implementation 读取。
-- EIP-1822 / UUPS proxiableUUID 辅助探测。
-- OpenZeppelin Transparent / UUPS 常见模式提示。
+1. 解析 `name(type,...)`，可选带 `returns (...)`。
+2. 由规范签名计算 4 字节 selector，calldata 预览随输入实时更新（纯本地）。
+3. ABI 编码参数：支持 `uintN` / `intN` / `bool` / `address` / `bytesN` / `bytes` / `string` / 动态数组。
+4. 每个区块发一次 `eth_call`，再按声明的返回类型解码。
 
-输出内容：
+行为细节：
 
-- Proxy address。
-- Implementation address。
-- Admin address。
-- Beacon address。
-- Chain / RPC 来源。
-- Slot 原始值。
-- 探测置信度。
-- 风险提示：implementation 为 0、admin 异常、beacon 不可读、合约无代码等。
+- 声明 `returns (uint256)` 得到精确解码；不声明时仍把返回值按 `uint256` 展示，避免用户只看到一串十六进制。
+- 多区块输入（每行一个区号）会逐块展示，并给出「所有区块结果相同 / 存在差异」的判定。
+- 响应中包含原始返回数据，可展开查看、可复制。
+- 参数数量不匹配、数值超出位宽、地址格式错误等，都在发送前本地拦截并给出具体原因。
 
-#### 5.1.4 Calldata Decoder
+**archive 依赖**：公共节点通常读不到历史状态。当节点返回 `archive` / `missing trie node` / `header not found` / `unknown state` 时，UI 会指出具体是哪个区块不可读，并提示到设置中切换 archive 端点，而不是把 RPC 原始错误直接抛给用户。
 
-目标：解析原始 calldata，识别 selector 并尽量还原函数参数。
+**不做的事**：不签名、不发交易、不支持 `eth_getLogs`、不支持带 value 的调用。
 
-核心功能：
+#### 5.5 Calldata 解码器
 
-- 提取 4-byte selector。
-- 本地 ABI 优先解析：用户可粘贴 ABI。
-- 远端签名字典补全：支持 OpenChain / 4byte 查询。
-- 多候选签名展示。
-- 参数 ABI decode。
-- 支持 unknown selector 的手动签名输入。
-- 输出 decoded view、raw words、copyable JSON。
+拆分 selector 与后续 ABI 参数，按 32 字节对齐展示每个参数及其序号。纯本地，不查 4byte 数据库。
 
-隐私规则：
+#### 5.6 单位转换器
 
-- 纯本地模式开启时，不查询 OpenChain / 4byte。
-- 用户粘贴的 calldata 不自动上传，必须由用户触发“查询签名”。
+在 `wei` / `gwei` / `ether` / 自定义代币精度之间双向换算，基于 `BigInt`，不使用浮点数。小数位数超出精度时直接报错。
 
-#### 5.1.5 Unit Converter
+#### 5.7 4Byte / Selector 查询
 
-目标：高精度转换 Wei / Gwei / Ether / Token Decimals。
+本地计算 `keccak256`，输出函数 selector（前 4 字节）与事件 topic0（完整 32 字节）。不发网络请求。
 
-核心功能：
+#### 5.8 编码与哈希套件
 
-- Wei、Gwei、Ether 双向实时转换。
-- 自定义 token decimals。
-- 大数精度安全，禁止 JS 浮点误差污染。
-- 常用 decimals 快捷项：6、8、9、18。
-- 输出科学计数法、完整数字、格式化小数。
+七种模式：Keccak256、SHA-256、SHA-1、Base64 编码/解码、URL 编码/解码。全部本地执行（SHA 系列走 `crypto.subtle`）。
 
-#### 5.1.6 4Byte / Selector Finder
+#### 5.9 对称加密
 
-目标：函数与事件签名 hash 生成及反查。
+AES-GCM 加解密试验台：
 
-核心功能：
+- PBKDF2-SHA-256 派生密钥，100,000 次迭代，随机 16 字节盐。
+- 随机 12 字节 IV。
+- 输出自描述 JSON 密文包（`v`、`alg`、`kdf`、`iterations`、`iv`、`salt`、`data`），可直接粘贴回来解密。
+- 密钥不落盘、不出浏览器。
 
-- 输入函数签名生成 selector：`transfer(address,uint256)` -> `0xa9059cbb`。
-- 输入事件签名生成 topic0。
-- selector / topic0 反查候选签名。
-- 支持批量输入。
-- 展示 Keccak256 原始 hash。
+#### 5.10 JWT 检查器
 
-隐私规则：
+本地 Base64URL 解码 header 与 payload，输出算法、过期时间与状态（已过期 / 有效或未知）。**不验证签名**——这一点在 UI 上应被理解为「解码」而非「校验」。
 
-- 生成 hash 本地完成。
-- 反查需要外部 API，受纯本地模式控制。
+#### 5.11 JSON 工作台
 
-#### 5.1.7 Encoder / Hash Suite
+格式化、压缩、校验 JSON，并可推断 TypeScript 类型骨架。
 
-目标：提供常用编码、解码、摘要工具。
+#### 5.12 时间戳工具
 
-支持能力：
+- **单条解析**：时间戳（秒 / 毫秒 / 微秒 / 纳秒，或自动识别）与日期字符串互转，支持任意 IANA 时区。
+- **批量转换**：逐行粘贴，输出表格并可复制为 CSV。
+- 附带实时 Unix 时钟、单位切换、暂停、`±1h` / `±1d` 快捷调整。
+- 输出包含 ISO 8601、SQL UTC、当地时区、年内第几天、ISO 周。
 
-- MD5。
-- SHA1。
-- SHA256。
-- Keccak256。
-- Base64 encode / decode。
-- URL encode / decode。
-- Hex / UTF-8 转换。
+#### 5.13 进制转换器
 
-安全提示：
+2–36 进制任意互转，基于 `BigInt`。支持 `0x` / `0b` / `0o` 前缀（且必须与输入进制匹配）、大写输出、二进制与十六进制分组显示。
 
-- MD5 与 SHA1 仅用于兼容和校验，不建议用于安全签名或密码存储。
+#### 5.14 文本对比
 
-#### 5.1.8 Symmetric Encryption
+逐行 LCS 差异比对，输出 `+` 新增 / `-` 删除 / 空格 未变的行级结果。纯本地。
 
-目标：提供本地对称加密 / 解密工具。
+#### 5.15 时间看盘
 
-支持能力：
+- 北京 / 香港 / 纽约三地实时时钟。
+- 美股、A 股、港股三个市场的交易状态、开盘/收盘倒计时、时段条。
+- 美国夏令时状态与下一次切换时间。
 
-- AES-GCM 加密 / 解密。
-- AES-CBC 兼容模式。
-- DES 兼容模式。
-- IV / nonce 生成。
-- Salt 生成。
-- PBKDF2 / Argon2id 派生密钥建议。
-- 输出 Base64 / Hex。
+已知边界（UI 中有明确提示）：未纳入节假日（美国感恩节、A 股春节/国庆等）与临时休市，仅按周一至周五与常规时段计算。
 
-安全修正：
+### 6. 设计系统
 
-- 默认推荐 AES-GCM。
-- DES 标记为 Legacy / Weak，不作为推荐算法。
-- 密钥、明文、密文必须只在本地处理，不上传服务器。
+四组 token，每组只承担一件事。
 
-#### 5.1.9 JWT Inspector
+**中性色**：带色相而非纯灰，饱和度为 10–26%，让页面有调性但不靠饱和度做装饰。
 
-目标：解析 JWT 并校验过期时间。
+| Token | 暗色 | 亮色 |
+|---|---|---|
+| `--canvas` | `222 26% 6.5%` | `220 22% 97%` |
+| `--surface` | `222 20% 10.5%` | `0 0% 100%` |
+| `--panel` | `222 22% 8.5%` | `220 24% 96%` |
+| `--line` | `222 15% 24%` | `220 16% 85%` |
+| `--text` | `214 26% 94%` | `222 30% 14%` |
+| `--muted` | `216 14% 67%` | `220 13% 42%` |
+| `--faint` | `216 12% 54%` | `220 10% 45%` |
 
-核心功能：
+**动作色**：只用于可交互元素。
 
-- Header / Payload 解码。
-- `exp`、`iat`、`nbf` 可读时间显示。
-- 过期状态与剩余时间提示。
-- Algorithm none / weak alg 风险提示。
-- 支持 HS256 本地验签。
+| Token | 暗色 | 亮色 |
+|---|---|---|
+| `--accent` | `217 90% 70%` | `221 83% 46%` |
+| `--accent-fg` | `222 40% 7%` | `0 0% 100%` |
 
-安全边界：
+**身份色**：只用于分区识别。
 
-- 默认不把 token 发往任何服务器。
-- 不保存用户输入 token。
+| Token | 暗色 | 亮色 |
+|---|---|---|
+| `--family-reverse` | `262 60% 68%` | `262 55% 46%` |
+| `--family-dev` | `180 45% 52%` | `183 90% 26%` |
+| `--family-general` | `216 12% 54%` | `220 10% 45%` |
 
-### 5.2 通用开发
+**语义色**：只用于表达状态，必须配图标或文字。
 
-#### 5.2.1 JSON Studio
+| Token | 暗色 | 亮色 |
+|---|---|---|
+| `--ok` | `158 50% 52%` | `158 62% 29%` |
+| `--warn` | `36 85% 63%` | `28 90% 35%` |
+| `--danger` | `356 75% 68%` | `356 66% 44%` |
 
-目标：JSON 格式化、美化、校验与结构转换。
+**禁止清单**：渐变、彩色阴影、大块彩色背景。彩色像素占比目标 ≤5%。
 
-核心功能：
+**形状**：控件 `10px`、卡片 `14px`、浮层 `20px`。嵌套控件比容器小一档。
 
-- JSON format / minify。
-- 错误定位。
-- JSONPath 查询。
-- JSON diff。
-- JSON 转 TypeScript interface。
-- JSON 转 Go struct。
-- JSON 转 SQL table draft。
-- 大 JSON 虚拟滚动展示。
+**字重**：上限 700，无 900。正文 400，面板标题 600。
 
-#### 5.2.2 Timestamp Pro
+**对比度**：两套主题全部 token 达到 WCAG AA（最低 4.59，为亮色 `faint` 落在 panel 上）。完整数值见 README。
 
-目标：Unix 时间戳、时区与区块时间辅助转换。
+### 7. 国际化
 
-核心功能：
+**已实现，且中英对等。**
 
-- 秒 / 毫秒自动识别。
-- UTC 与本地时区转换。
-- 指定时区转换。
-- 相对时间计算：now + 7d、now - 3h。
-- 常见格式输出：ISO 8601、RFC 3339、SQL datetime。
-- 区块时间估算：按链平均出块时间推算近似 block height。
+- 367 条用户可见字符串，全部位于 `src/lib/i18n.ts`，`[English, 中文]` 成对存放。
+- 通过 `LanguageContext` + `useT()` 取用；需要语言参数的纯函数用 `t(lang, key, vars)`。
+- 支持占位符插值（如 `{count}`、`{time}`）。
 
-#### 5.2.3 Text Compare
+**翻译策略**（这是中文模式可读的关键）：
 
-目标：并排对比两段文本并突出差异。
+- 翻译所有自然语言：说明、错误、空状态、字段名、面板名、按钮、工具描述、标签。
+- 保留英文的协议/工具专有名：`RPC`、`mapping`、`calldata`、`selector`、`ABI`、`bytes32`、`uint256`、`JWT`、`JSON`、`Keccak`、`Base64`、`chainId`。理由：翻译后会切断用户与所输入代码的联想。
+- 不在一句话里混用两种语言。
 
-核心功能：
+**搜索与展示**：搜索索引中英双语，任一语言输入均可命中；但关键词列表按当前语言过滤展示，避免中文工具名下出现 `json / format / 格式化`。
 
-- 左右输入对比。
-- 行级 diff。
-- 插入、删除、修改高亮。
-- 统一格式化后再比对。
-- 复制差异结果。
+**语言相关格式化**：
 
-### 5.3 跨境运营
+- 相对时间使用 `Intl.RelativeTimeFormat`，按 `zh-CN` / `en` 渲染。
+- 日期时间使用 `Intl.DateTimeFormat`，支持任意 IANA 时区与夏令时。
+- 星期、市场状态、盘前盘后、夏令时名称全部双语。
 
-#### 5.3.1 FBA & Landed Cost Calculator
+**已审计**：15 个工具 × 2 语言全量扫描，英文模式零 CJK 泄漏，中文模式零英文散文泄漏。
 
-目标：计算跨境商品利润、平台佣金、FBA 费用、进口成本与到岸成本。
+**主题与语言的持久化**：存于 `localStorage` 的 `linsea-react-state`。主题在首帧前由内联脚本解析，深色用户不会闪白。
 
-核心功能：
+### 8. 技术架构（实际）
 
-- 商品售价、采购成本、头程运费、尾程费用、仓储费输入。
-- 平台佣金比例。
-- 关税 / VAT / GST。
-- 汇率。
-- 毛利、净利、ROI、利润率输出。
-- 敏感性分析：售价变化、汇率变化、运费变化。
-- 支持保存计算模板。
+**前端**：Vite 6 + React 19 + TypeScript 5.7 + Tailwind CSS 3.4，lucide-react 图标。纯静态，无后端、无路由。
 
-#### 5.3.2 Listing Text Cleaner
+**源码结构**：
 
-目标：清洗 Listing 文本并导出纯文本。
-
-核心功能：
-
-- 去除 HTML 标签。
-- 去除多余空行。
-- 去除特殊不可见字符。
-- 全角 / 半角转换。
-- Trim whitespace。
-- Bullet point 格式整理。
-- 字符数 / 单词数统计。
-
-#### 5.3.3 Product Pure White BG
-
-目标：将产品图片处理为纯白背景。
-
-实现策略：
-
-- MVP：前端 Canvas 简单抠图，适合背景颜色接近纯色的商品图。
-- 增强版：接入后端或第三方图像分割接口。
-- 隐私提示：用户应明确知道图片是否会离开浏览器。
-
-核心功能：
-
-- 上传图片。
-- 背景容差调节。
-- 边缘羽化。
-- 白底预览。
-- 导出 JPG / PNG。
-
-#### 5.3.4 Global Shipping Tracker
-
-目标：提供物流单号追踪入口。
-
-核心功能：
-
-- 自动识别常见承运商。
-- 单号格式校验。
-- 跳转到承运商官网或聚合查询页面。
-- 支持 DHL、FedEx、UPS、USPS、YunExpress、4PX 等常见渠道。
-
-### 5.4 风控测试
-
-#### 5.4.1 Card & BIN Tester
-
-目标：用于支付测试、风控 QA 与 BIN 基础识别。
-
-核心功能：
-
-- Luhn 算法校验。
-- 卡组织识别：Visa、Mastercard、Amex、Discover、JCB、UnionPay 等。
-- BIN 字典查询：发卡行、国家、卡种、借记 / 贷记类型。
-- Sandbox 卡号生成：基于测试 BIN 生成满足 Luhn 的测试卡号。
-- 批量校验。
-
-合规声明：
-
-- 本工具仅用于支付网关 sandbox、QA 测试、格式校验和教育用途。
-- 不生成真实可用银行卡。
-- 不支持 CVV 猜测、有效期猜测、批量撞库、绕过风控或任何欺诈行为。
-- BIN 查询依赖公开或授权数据源，结果仅供参考。
-
-## 6. 全局交互设计
-
-### 6.1 工作台布局
-
-- 左侧：工具分组导航。
-- 中间：输入区与参数区。
-- 右侧：结果区、解释区、历史记录。
-- 顶部：搜索、主题、语言、设置、隐私模式状态。
-- 移动端：导航折叠为抽屉，输入与输出上下排列。
-
-### 6.2 Cmd + K 命令面板
-
-触发方式：
-
-- macOS：Cmd + K。
-- Windows / Linux：Ctrl + K。
-
-能力：
-
-- 搜索工具：slot、proxy、json、luhn、cron 等关键词。
-- 执行动作：format JSON、copy output、clear input、toggle theme。
-- 显示最近使用工具。
-- 支持中英文关键词。
-
-### 6.3 Settings Modal
-
-配置项：
-
-- Alchemy API Key。
-- Infura API Key。
-- 默认 Chain（Ethereum / Sepolia / Polygon / BSC / Anubis / Custom EVM chain）。
-- RPC Endpoint override。
-- Custom chain：chainId + 可选链名，配合 RPC override 使用。
-- Privacy First Mode。
-- Theme：System / Light / Dark。
-- Language：中文 / English。
-- 清空本地历史。
-
-存储策略：
-
-- API Key 默认仅存储在浏览器 localStorage 或 IndexedDB。
-- 明确提示：本地存储不等同于强加密保险箱。
-- 可提供“仅本次会话保存”选项，使用 sessionStorage。
-
-### 6.4 明暗主题
-
-暗黑模式：
-
-- 背景：`#09090b`。
-- 面板：`#111113` / `#18181b`。
-- 边框：`#27272a`。
-- 文本：`#fafafa` / `#a1a1aa`。
-- 代码高亮：使用高对比但不过饱和的色彩。
-
-明亮模式：
-
-- 背景：`#ffffff`。
-- 面板：`#f8fafc`。
-- 边框：`#e4e4e7`。
-- 文本：`#09090b` / `#52525b`。
-
-视觉要求：
-
-- 不使用大面积渐变与装饰图形。
-- 卡片圆角不超过 8px。
-- 优先使用表格、分栏、代码块、紧凑表单。
-- 工具按钮使用图标 + tooltip，常见动作不使用冗长文字。
-
-## 7. 国际化
-
-技术方案：
-
-- 推荐：`next-intl`。
-- 备选：`react-i18next`。
-
-语言范围：
-
-- 中文：默认文案面向中文用户。
-- English：覆盖工具名称、参数、错误提示、帮助说明、设置项。
-
-实现要求：
-
-- 路由可采用 `/zh`、`/en`。
-- 工具 slug 保持英文，利于分享与 SEO。
-- 数字、时间、货币格式按 locale 渲染。
-- 命令面板支持中英文别名。
-
-## 8. 技术架构
-
-### 8.1 前端
-
-推荐技术栈：
-
-- TypeScript。
-- Vite + React。
-- Tailwind CSS。
-- shadcn/ui 风格的本地组件 primitives。
-- 自定义 Theme Provider。
-- 轻量 i18n 映射。
-- Zustand 或 Jotai 管理轻量状态。
-- TanStack Query 管理远程请求状态。
-- React Hook Form + Zod 管理复杂表单与校验。
-
-前端部署：
-
-- GitHub Pages + Cloudflare 自定义域名。
-- Cloudflare Pages。
-- 静态优先；如后续需要隐藏平台 RPC key，再追加 Cloudflare Workers 或 Serverless Route Handler。
-
-### 8.2 后端代理
-
-Route Handler：
-
-- `/api/rpc`：只读 RPC 代理。
-- `/api/signature`：可选 selector / topic 反查代理。
-- `/api/bin`：可选 BIN 数据查询代理。
-
-代理规则：
-
-- 限定 HTTP method 为 POST。
-- 校验 Origin。
-- 校验 Content-Type。
-- 请求体大小限制。
-- JSON-RPC method 白名单。
-- IP 限流。
-- 日志脱敏。
-
-### 8.3 RPC 白名单
-
-默认允许：
-
-- `eth_chainId`
-- `eth_blockNumber`
-- `eth_getCode`
-- `eth_getStorageAt`
-- `eth_call`
-- `eth_getBalance`
-- `eth_getTransactionByHash`
-- `eth_getTransactionReceipt`
-
-默认禁止：
-
-- `eth_sendRawTransaction`
-- `eth_sendTransaction`
-- `personal_*`
-- `wallet_*`
-- `debug_*`
-- `trace_*`
-- `admin_*`
-- `miner_*`
-
-### 8.4 安全策略
-
-IP 限流：
-
-- 使用 Upstash Redis。
-- 默认限制：单 IP 30 次 / 分钟。
-- 对 `/api/rpc`、`/api/signature`、`/api/bin` 分别限流。
-
-CORS 域名锁：
-
-- 只允许生产域名、预览域名白名单。
-- 本地开发仅允许 localhost。
-- Origin 缺失时默认拒绝，除非明确为内部 server-to-server 场景。
-
-BYOK 策略：
-
-- 用户提供 Alchemy / Infura API Key 后，优先走用户自己的 RPC。
-- 用户 Key 不上传到产品服务器。
-- 前端直接拼接官方 endpoint。
-- UI 明确显示当前请求来源：Local、User RPC、Server Proxy。
-
-隐私模式：
-
-- 开启后禁用所有第三方请求。
-- 禁用 OpenChain / 4byte / BIN 远程查询。
-- 禁用 server RPC 代理。
-- 仍允许本地 hash、编码、解码、格式化、slot 计算。
-
-## 9. 数据与存储
-
-本地存储内容：
-
-- 用户设置。
-- 最近使用工具。
-- 收藏工具。
-- 非敏感历史记录。
-
-默认不保存：
-
-- JWT。
-- API Key 以外的敏感密文。
-- Calldata 原文历史。
-- 上传图片。
-- 卡号输入记录。
-
-可选策略：
-
-- 提供“禁用历史记录”开关。
-- 对敏感工具默认关闭历史记录。
-- 清空所有本地数据按钮。
-
-## 10. 可观测性
-
-可采集：
-
-- 工具打开次数。
-- 错误类型。
-- 性能指标。
-- API 限流命中次数。
-
-不可采集：
-
-- 用户输入的 JWT、calldata、卡号、密钥、图片内容。
-- 用户 BYOK API Key。
-- 明文、密文、hash 原文。
-
-建议：
-
-- 使用匿名事件。
-- 给隐私模式提供完整 opt-out。
-- 日志中对地址、hash、IP 做最小化处理。
-
-## 11. 广告与变现设计
-
-目标：在不破坏专业工具体验、不影响隐私承诺、不降低页面性能的前提下，为后续接入 Google AdSense / Google Ads 预留广告能力。
-
-### 11.1 广告位原则
-
-- 工具核心操作区优先，广告不得插入输入框、参数表单、执行按钮与结果区之间。
-- 广告不得遮挡、挤压或模拟复制按钮、运行按钮、下载按钮、下拉菜单等交互控件。
-- 广告周围保留明确间距，并使用 `Advertisement` / `Sponsored` 标识。
-- 工具页控制广告密度，内容页和教程页可承担更多广告展示。
-- 移动端首屏尽量不展示广告，避免压缩核心工具操作空间。
-
-推荐广告位：
-
-- 桌面端右侧辅助栏底部：适合 `300x250`。
-- 工具结果区下方：适合 responsive display ad。
-- 长文档页正文中段：适合内容流广告。
-- 页面底部：适合横幅或响应式广告。
-- 移动端工具操作完成后：适合 `320x100` 或响应式广告。
-
-不推荐广告位：
-
-- 全局 Cmd + K 面板内。
-- Settings modal 内。
-- 输入区与输出区之间。
-- 复制按钮、格式化按钮、查询按钮附近。
-- JWT、卡号、密钥、加密解密等敏感工具的首屏区域。
-
-### 11.2 布局预留
-
-- 所有广告容器必须预留稳定尺寸，避免广告加载后造成 CLS。
-- 广告加载失败时保留空白或收起到安全占位，不影响工具主体布局。
-- 桌面端侧栏广告不得导致主工作区宽度跳变。
-- 移动端广告必须在工具流程之后出现，不打断输入到结果的阅读路径。
-- 开发环境显示灰色 placeholder，用于校验布局但不加载真实广告脚本。
-
-建议尺寸：
-
-- Sidebar rectangle：`300x250`。
-- Desktop banner：`728x90`。
-- Mobile banner：`320x100`。
-- Responsive display：使用固定 `min-height` 包裹。
-
-### 11.3 隐私模式与同意管理
-
-Privacy First Mode 开启时：
-
-- 不加载 Google Ads / AdSense 脚本。
-- 不请求广告资源。
-- 不写入广告相关 cookie。
-- UI 显示广告区域已因隐私模式暂停。
-
-Cookie / Consent：
-
-- 面向 EU / UK 用户时，需要接入同意管理逻辑。
-- 用户未同意个性化广告时，仅加载非个性化广告或不加载广告。
-- 隐私政策必须说明广告、cookie、统计和第三方请求用途。
-- 用户应能撤回同意并重新配置隐私偏好。
-
-### 11.4 合规内容要求
-
-逆向安全工具：
-
-- 文案使用 smart contract auditing、defensive security、analysis、debugging 等防御性表述。
-- 避免“破解”“盗取”“绕过”“攻击真实目标”等高风险表达。
-- 示例数据使用公开合约、测试网或虚构地址。
-
-风控与卡号工具：
-
-- 明确声明仅用于 sandbox、QA testing、format validation、education。
-- 不生成真实可用银行卡。
-- 不提供 CVV 猜测、有效期猜测、批量撞库、绕风控等功能。
-- BIN 查询结果仅供参考，不作为金融决策依据。
-
-加密与 JWT 工具：
-
-- 强调本地解析与调试用途。
-- 不引导用户上传生产密钥、生产 token 或敏感凭证。
-- 对弱算法提供明确风险提示。
-
-跨境运营工具：
-
-- 成本、利润、税费结果必须标记为估算值。
-- 关税、汇率、平台费用可能变化，用户需以官方口径为准。
-
-### 11.5 技术实现建议
-
-统一封装 `AdSlot` 组件：
-
-- `placement`：广告位置，如 `tool-sidebar`、`tool-footer`、`article-inline`。
-- `format`：广告格式，如 `rectangle`、`banner`、`responsive`。
-- `minHeight`：稳定布局高度。
-- `disabledReason`：隐私模式、未同意 cookie、开发环境、敏感工具等禁用原因。
-- `fallback`：广告失败或禁用时的占位。
-
-加载策略：
-
-- 广告脚本延迟加载，避免阻塞首屏工具。
-- 使用 lazy loading，仅在广告位接近 viewport 时初始化。
-- 对脚本加载失败静默降级。
-- 工具计算逻辑不得依赖广告脚本。
-- 对广告组件做 error boundary，避免广告异常影响页面。
-
-敏感工具默认策略：
-
-- JWT Inspector：默认不在首屏放广告。
-- Symmetric Encryption：默认不在首屏放广告。
-- Card & BIN Tester：默认只允许页底广告。
-- Calldata Decoder：默认广告不得紧邻输入区。
-
-### 11.6 广告验收标准
-
-- 广告开启后 Core Web Vitals 不出现明显退化。
-- 广告加载前后页面无明显布局跳动。
-- Privacy First Mode 下无 Google Ads 网络请求。
-- Cookie 未同意时广告行为符合目标市场法规要求。
-- 广告不遮挡、不伪装、不诱导误点击。
-- 敏感工具页广告位置符合合规策略。
-
-## 12. SEO 与分享
-
-页面策略：
-
-- 每个工具拥有独立 URL，例如：`/tools/storage-slot-inspector`、`/tools/source-layout-resolver`、`/tools/text-compare`。
-- 支持 query 参数预填非敏感示例。
-- 生成 OpenGraph 标题与描述。
-- 文档页提供工具解释与示例。
-
-注意：
-
-- 不通过 URL 分享敏感输入。
-- 对 JWT、卡号、密钥类工具禁止自动写入 URL。
-
-## 13. MVP 范围
-
-第一阶段优先交付：
-
-- 全局布局。
-- Cmd + K。
-- Settings modal。
-- 明暗主题。
-- 中英双语基础。
-- Unit Converter。
-- Encoder / Hash Suite。
-- JWT Inspector。
-- JSON Studio。
-- Timestamp Pro。
-- Text Compare。
-- Source Layout Resolver。
-- 4Byte / Selector Finder 的本地生成能力。
-- Storage Slot Inspector 的本地计算能力。
-- Card Luhn 校验。
-
-第二阶段：
-
-- `/api/rpc` 代理。
-- Proxy Slot Finder。
-- Storage Slot Inspector 链上读取。
-- Calldata Decoder + 远程 selector 查询。
-- Card BIN 查询。
-- FBA Calculator。
-- Listing Text Cleaner。
-- Source Layout Resolver 的源码映射增强。
-
-第三阶段：
-
-- Product Pure White BG。
-- Global Shipping Tracker。
-- 高级 JSON diff。
-- 多链支持。
-
-## 14. 验收标准
-
-通用验收：
-
-- 所有工具在桌面端和移动端布局不溢出。
-- 暗黑 / 明亮主题切换无闪烁或低对比问题。
-- Cmd + K 可搜索并跳转所有工具。
-- 纯本地模式下无第三方网络请求。
-- 所有可复制输出均有明确复制按钮。
-- 输入错误有可读提示，不出现未捕获异常。
-
-安全验收：
-
-- `/api/rpc` 只允许白名单只读方法。
-- IP 限流生效。
-- Origin 校验生效。
-- BYOK 不上传服务器。
-- JWT、卡号、密钥类输入不进入日志和历史记录。
-
-性能验收：
-
-- 首屏交互时间控制在合理范围。
-- 大文本工具使用 debounce 或 worker，避免输入卡顿。
-- Hash、JSON、bytecode 等重计算任务尽量使用 Web Worker。
-
-广告验收：
-
-- 广告容器预留稳定尺寸，不造成明显 CLS。
-- 纯本地模式下广告脚本不加载。
-- 广告不出现在敏感工具首屏核心操作区。
-- 广告失败时不影响工具使用。
-
-## 15. 风险与修正建议
-
-- DES 不应作为推荐加密算法，仅作为兼容解密工具展示。
-- Source Layout Resolver 的解析成功率需要持续验证。
-- Calldata Decoder 的远程签名查询可能泄露业务行为，应受隐私模式约束。
-- Card 工具必须强调 sandbox 与测试用途，不提供真实可用卡生成。
-- Product Pure White BG 若追求稳定商用品质，纯前端方案可能不足，需要预留服务端或第三方接口。
-- RPC 代理必须限制方法，否则容易被滥用或消耗节点额度。
-- Google Ads / AdSense 审核可能对逆向安全、BIN、卡号、加密类页面敏感，需要通过防御性文案和明确合规声明降低误判风险。
-
-## 16. 推荐页面结构
-
-```text
-/[locale]
-/[locale]/tools/storage-slot-inspector
-/[locale]/tools/source-layout-resolver
-/[locale]/tools/proxy-slot-finder
-/[locale]/tools/calldata-decoder
-/[locale]/tools/unit-converter
-/[locale]/tools/selector-finder
-/[locale]/tools/hash-suite
-/[locale]/tools/symmetric-encryption
-/[locale]/tools/jwt-inspector
-/[locale]/tools/json-studio
-/[locale]/tools/timestamp-pro
-/[locale]/tools/text-compare
-/[locale]/tools/fba-landed-cost
-/[locale]/tools/listing-text-cleaner
-/[locale]/tools/product-white-bg
-/[locale]/tools/shipping-tracker
-/[locale]/tools/card-bin-tester
-/api/rpc
-/api/signature
-/api/bin
+```
+src/
+  App.tsx              工具注册表、外壳、14 个工作台
+  components/ui.tsx    基础组件（Button/Input/Select/Combobox/Tabs/Panel/Notice/EmptyState/Modal/…）
+  lib/i18n.ts          345 条双语字符串 + Provider + hooks
+  lib/chains.ts        链注册表与端点解析
+  lib/rpc.ts           只读 JSON-RPC 传输
+  lib/evm.ts           存储槽计算、ABI 解码、Solidity 源码解析
+  index.css            设计 token 与基础样式
 ```
 
-## 17. 成功指标
+**依赖约束**：运行时依赖只有 `react`、`react-dom`、`lucide-react`。没有路由库、没有状态管理库、没有 i18n 库、没有 UI 组件库——全部手写，目的是控制体积与行为可预测性。
 
-产品指标：
+**未实现（规划中）**：后端 RPC 代理、`/api/*` 服务端路由、IP 限流、Next.js/next-intl 迁移。当前架构是纯静态站点，这些都不存在。
 
-- 工具首次可用时间。
-- 工具搜索命中率。
-- 单用户日均工具使用次数。
-- 收藏工具使用率。
-- 复制结果次数。
+### 9. 链支持
 
-质量指标：
+| 链 | chainId | 默认端点 | 原生代币 |
+|---|---|---|---|
+| Ethereum Mainnet | 1 | Alchemy / Infura BYOK | ETH |
+| Sepolia Testnet | 11155111 | Alchemy / Infura BYOK | ETH |
+| Polygon Mainnet | 137 | Alchemy / Infura BYOK | POL |
+| BNB Smart Chain | 56 | Alchemy BYOK | BNB |
+| Anubis Mainnet | 6714 | `https://rpc.anubispace.org`（无需 Key） | DAI |
+| 自定义 EVM 链 | 用户提供 | 用户提供 RPC 地址 | — |
 
-- 前端错误率。
-- API 限流命中率。
-- RPC 代理失败率。
-- 大文本处理卡顿率。
+**端点优先级**：RPC 地址覆盖 → 内置公共 RPC → Alchemy Key → Infura Key。服务商 Key 绝不会用于该服务商不支持的链，配置错误会报错而非静默换链。
 
-隐私指标：
+**每次读取的固定动作**：
 
-- 纯本地模式使用率。
-- BYOK 使用率。
-- 敏感工具历史记录禁用率。
+1. `eth_chainId` 校验，不匹配立即中止；
+2. `latest` 解析为具体区块号；
+3. 输出 chainId、端点主机、读取区块。
 
-变现指标：
+**RPC 方法**：应用只调用只读方法（`eth_chainId`、`eth_getStorageAt`、`eth_blockNumber` 等）。不存在发交易的方法调用路径。
 
-- 广告展示量。
-- 广告可见率。
-- 广告点击率。
-- 广告开启后的跳出率变化。
-- 广告开启后的工具完成率变化。
+### 10. 隐私与存储
 
-## 18. 一句话总结
+**本地存储**（`localStorage`）：
 
-Linsea Tools 要成为一个“打开就能干活”的专业工具箱：链上逆向足够硬核，开发工具足够顺手，运营计算足够实用，安全与隐私边界足够清晰。
+- `linsea-react-state`：当前分类、当前工具、主题、语言、最近使用（存 8 条、展示 5 条）、设置快照。
+- `linsea-tools-settings`：Alchemy / Infura Key、默认链、自定义链与 RPC 地址、隐私模式开关。
+
+**不保存**：输入过的合约地址、calldata、JWT、明文/密文、对比文本、计算历史。
+
+**隐私优先模式**：一个开关同时停用 RPC、广告与远程查询。开启后链上工具直接拒绝执行并提示，不静默降级。
+
+**无遥测**：不埋点、不上报错误、无第三方统计脚本。
+
+### 11. 广告位
+
+右栏保留一个 `300 × 250` 占位块，当前不含任何广告代码。隐私优先模式下显示为停用状态。
+
+约束（如未来接入）：不放第三方脚本、不做行为定向、不读取本地计算内容。
+
+### 12. 测试与构建
+
+- `npm test`：56 个单元测试，覆盖链解析（端点优先级、自定义链校验、URL 规范化）、JSON-RPC 传输层（批量、串行降级、错误解码），以及 ABI 编解码（类型解析、selector 计算、静态与动态参数编码、返回数据解码、archive 错误识别）。
+- `npm run build`：先跑 `tsc -b`，类型错误直接失败；产物输出到 `dist/`。
+- 当前产物体积：JS ≈ 346 kB（gzip ≈ 108 kB），CSS ≈ 24 kB（gzip ≈ 5.5 kB）。
+
+### 13. 明确不做
+
+- 任何涉及私钥、签名、发交易的功能。
+- 任何需要上传用户数据的服务端处理。
+- 支付卡生成、撞库、绕过风控类工具。
+- 营销落地页。
+
+### 14. 一句话总结
+
+14 个只读工具，四层配色，中英对等，静态部署，无后端。
+
+---
+
+## English
+
+### 1. Positioning
+
+A **single-page toolbox** for Web3 reverse engineering and everyday development work. Open it and start typing; there is no landing page.
+
+In one line: compress high-frequency micro-tasks — read a storage slot, decode calldata, convert a timestamp — into open, type, copy.
+
+### 2. Users
+
+| User | Typical actions |
+|---|---|
+| Web3 security researcher | read raw slots, locate a mapping base slot, find a proxy implementation, split calldata |
+| Solidity / full-stack developer | compute selectors, convert units, format JSON, diff text, convert radix |
+| General user | market clock, timestamp conversion |
+
+### 3. Principles
+
+1. **A tool is the page.** The first screen is the workbench. No hero, no marketing section.
+2. **Local first.** Anything the browser can compute, the browser computes. Of the 15 tools, only Storage Slot Inspector, Proxy Slot Finder, and Read Contract make network requests.
+3. **Read-only.** No signing, no transactions, no private keys. The app has no write path to any chain.
+4. **Results are re-checkable.** Every chain read reports chainId, endpoint host, and the exact block number, so any output can be reproduced later.
+5. **One colour, one meaning.** A hard constraint on the palette; see section 6.
+
+### 4. Information architecture
+
+Four sections, 15 tools:
+
+| Section | Count | Tools |
+|---|---|---|
+| Reverse Security | 7 | Storage Slot Inspector, Source Layout Resolver, Proxy Slot Finder, Read Contract (eth_call), Calldata Decoder, Unit Converter, 4Byte / Selector Finder |
+| Encoding & Crypto | 4 | Encoder / Hash Suite, Symmetric Encryption, JWT Inspector, Base Converter |
+| Developer | 3 | JSON Studio, Timestamp Pro, Text Compare |
+| General Tools | 1 | Market Clock |
+
+Sections split by **task type**, not technical difficulty: anything needing contract state stays in Reverse Security; pure encoding, cryptography, and radix work moves to Encoding & Crypto.
+
+Sections are colour-coded (violet / teal / neutral), but that colour appears in exactly four places: the rail stripe, the tool list icon, the category chip, and the command palette icon. Encoding & Crypto reuses the teal; Developer and General Tools are both neutral, so no extra hue is spent on a catch-all section.
+
+### 5. Tools (all implemented)
+
+#### 5.1 Storage Slot Inspector
+
+Two modes:
+
+- **Raw slot read** — contract address plus a slot index (decimal or `0x`) reads one 32-byte word via `eth_getStorageAt`. Outputs the raw bytes32, decoded views as `bytes32` / `bool` / `uint256` / `int256` / `address`, and the decimal uint256 value.
+- **Mapping probe** — takes a mapping declaration (e.g. `mapping(address => bool) public _feeWhiteList;`) and a key. With a known base slot it computes `keccak256(abi.encode(key, slot))` and reads that single slot; without one it scans a range of base slots and reports every non-zero hit.
+
+Implementation constraints:
+
+- Scans run 20 calls per JSON-RPC batch and fall back to sequential requests when the endpoint rejects batching.
+- 24 match limit; 500-slot scan ceiling.
+- **A scan is evidence, not proof.** When the expected value is `false` or `0`, chain storage cannot distinguish "value is zero" from "never written". The UI says so explicitly.
+
+#### 5.2 Source Layout Resolver
+
+Paste verified Solidity or Dedaub decompiled source, then resolve a variable or getter name to its storage slot and byte offset.
+
+- Only top-level state variables are counted; function bodies are skipped.
+- Multi-contract files are supported by naming the deployed contract.
+- Mapping types accept a key to derive the value slot.
+- `constant` / `immutable` are explicitly marked as not occupying storage.
+
+#### 5.3 Proxy Slot Finder
+
+Reads the three ERC-1967 slots (implementation, admin, beacon) in one batch, reporting chain name, chainId, block read, and raw slot values.
+
+#### 5.4 Read Contract (eth_call)
+
+Goal: call any view or pure function by signature, decode the result, and compare the same call across blocks.
+
+Flow:
+
+1. Parse `name(type,...)`, optionally with `returns (...)`.
+2. Compute the 4-byte selector from the canonical signature; the calldata preview updates as you type, entirely locally.
+3. ABI-encode the arguments: `uintN` / `intN` / `bool` / `address` / `bytesN` / `bytes` / `string` / dynamic arrays.
+4. One `eth_call` per requested block, then decode by the declared return types.
+
+Behaviour details:
+
+- Declaring `returns (uint256)` decodes exactly; without it the value is still shown as a uint256, so the user is never left with a bare hex string.
+- A block list (one per line) produces a per-block readout plus a same/different verdict.
+- The raw return data is included, expandable and copyable.
+- Argument count mismatches, out-of-range numbers, and malformed addresses are caught locally before anything is sent, with the specific reason.
+
+**Archive dependency**: public nodes usually cannot serve historical state. When a node answers with `archive`, `missing trie node`, `header not found`, or `unknown state`, the UI names the block that failed and points at the endpoint picker rather than surfacing the RPC error verbatim.
+
+**Out of scope**: no signing, no transactions, no `eth_getLogs`, no value-bearing calls.
+
+#### 5.5 Calldata Decoder
+
+Splits the selector from the following ABI arguments and lists each 32-byte word with its index. Purely local; no 4byte database lookup.
+
+#### 5.6 Unit Converter
+
+Bidirectional conversion between `wei` / `gwei` / `ether` / custom token precision, using `BigInt` throughout — no floats. Excess decimal places fail loudly.
+
+#### 5.7 4Byte / Selector Finder
+
+Computes `keccak256` locally and returns the function selector (first 4 bytes) and event topic0 (full 32 bytes). No network request.
+
+#### 5.8 Encoder / Hash Suite
+
+Seven modes: Keccak256, SHA-256, SHA-1, Base64 encode/decode, URL encode/decode. All local; the SHA family uses `crypto.subtle`.
+
+#### 5.9 Symmetric Encryption
+
+An AES-GCM playground:
+
+- PBKDF2-SHA-256 key derivation, 100,000 iterations, random 16-byte salt.
+- Random 12-byte IV.
+- Outputs a self-describing JSON bundle (`v`, `alg`, `kdf`, `iterations`, `iv`, `salt`, `data`) that can be pasted straight back for decryption.
+- Keys are never persisted and never leave the browser.
+
+#### 5.10 JWT Inspector
+
+Decodes the header and payload with Base64URL locally and reports algorithm, expiry, and status (expired / active or unknown). **The signature is not verified** — this is decoding, not validation, and the UI should be read that way.
+
+#### 5.11 JSON Studio
+
+Format, minify, validate, and infer a TypeScript shape skeleton from JSON.
+
+#### 5.12 Timestamp Pro
+
+- **Single parse** — convert between timestamps (seconds, milliseconds, microseconds, nanoseconds, or auto-detected) and date strings across any IANA timezone.
+- **Batch convert** — paste line by line, get a table you can copy out as CSV.
+- Ships with a live Unix clock, unit switching, pause, and `±1h` / `±1d` quick adjustments.
+- Output includes ISO 8601, SQL UTC, the selected zone, day of year, and ISO week.
+
+#### 5.13 Base Converter
+
+Any radix from 2 to 36, `BigInt` based. Accepts `0x` / `0b` / `0o` prefixes (which must match the input radix), uppercase output, and grouped binary/hex display.
+
+#### 5.14 Text Compare
+
+Line-level LCS diff with `+` added, `-` removed, and unchanged lines. Purely local.
+
+#### 5.15 Market Clock
+
+- Live clocks for Beijing, Hong Kong, and New York.
+- Trading state, open/close countdown, and session bars for US, A-share, and HK markets.
+- US daylight-saving state and the next transition.
+
+Known boundary, stated in the UI: holidays (US Thanksgiving, A-share Spring Festival and National Day, etc.) and unscheduled halts are not modelled — only Monday to Friday and regular session hours.
+
+### 6. Design system
+
+Four token families, each with exactly one job.
+
+**Neutral** — tinted rather than pure grey, 10–26% saturation, so the page has a hue without spending saturation on decoration.
+
+| Token | Dark | Light |
+|---|---|---|
+| `--canvas` | `222 26% 6.5%` | `220 22% 97%` |
+| `--surface` | `222 20% 10.5%` | `0 0% 100%` |
+| `--panel` | `222 22% 8.5%` | `220 24% 96%` |
+| `--line` | `222 15% 24%` | `220 16% 85%` |
+| `--text` | `214 26% 94%` | `222 30% 14%` |
+| `--muted` | `216 14% 67%` | `220 13% 42%` |
+| `--faint` | `216 12% 54%` | `220 10% 45%` |
+
+**Action** — interactive affordances only.
+
+| Token | Dark | Light |
+|---|---|---|
+| `--accent` | `217 90% 70%` | `221 83% 46%` |
+| `--accent-fg` | `222 40% 7%` | `0 0% 100%` |
+
+**Identity** — section recognition only.
+
+| Token | Dark | Light |
+|---|---|---|
+| `--family-reverse` | `262 60% 68%` | `262 55% 46%` |
+| `--family-dev` | `180 45% 52%` | `183 90% 26%` |
+| `--family-general` | `216 12% 54%` | `220 10% 45%` |
+
+**State** — result meaning only, always paired with an icon or a word.
+
+| Token | Dark | Light |
+|---|---|---|
+| `--ok` | `158 50% 52%` | `158 62% 29%` |
+| `--warn` | `36 85% 63%` | `28 90% 35%` |
+| `--danger` | `356 75% 68%` | `356 66% 44%` |
+
+**Forbidden list**: gradients, coloured shadows, large coloured fills. Target for coloured pixels: ≤5% of any screen.
+
+**Shape**: `10px` controls, `14px` cards, `20px` overlays. Nested controls sit one step below their container.
+
+**Weight**: 700 maximum, no 900. Body 400, panel titles 600.
+
+**Contrast**: every token meets WCAG AA in both themes (lowest 4.59, light `faint` on panel). Full table in the README.
+
+### 7. Internationalisation
+
+**Implemented, and the two languages are peers.**
+
+- 367 user-facing strings live in `src/lib/i18n.ts` as `[English, 中文]` pairs.
+- Reached through `LanguageContext` + `useT()`; pure helpers that need a language take `t(lang, key, vars)`.
+- Placeholder interpolation is supported (`{count}`, `{time}`).
+
+**Translation policy** — this is what keeps Chinese mode readable:
+
+- Translate all natural language: instructions, errors, empty states, field labels, panel names, buttons, tool descriptions, badges.
+- Keep in English the protocol and tooling terms whose translated form cuts the user's link to the code they are typing: `RPC`, `mapping`, `calldata`, `selector`, `ABI`, `bytes32`, `uint256`, `JWT`, `JSON`, `Keccak`, `Base64`, `chainId`.
+- Never mix the two inside one phrase.
+
+**Search vs display**: search indexes both scripts so either language finds the tool, but the keyword list is filtered to the active language — `json / format / 格式化` under a Chinese tool name reads as an unfinished translation.
+
+**Locale-aware formatting**:
+
+- Relative time via `Intl.RelativeTimeFormat` (`zh-CN` / `en`).
+- Date and time via `Intl.DateTimeFormat`, any IANA zone, DST handled.
+- Weekday names, market state, pre/post-market labels, and DST naming are all bilingual.
+
+**Audited**: all 15 tools in both languages. Zero CJK characters in English mode, zero English prose in Chinese mode.
+
+**Persistence**: theme and language live in `localStorage` under `linsea-react-state`. The theme is resolved before first paint by an inline script, so dark-mode users never see a white flash.
+
+### 8. Architecture (actual)
+
+**Frontend**: Vite 6, React 19, TypeScript 5.7, Tailwind CSS 3.4, lucide-react icons. Fully static — no backend, no router.
+
+**Source layout**:
+
+```
+src/
+  App.tsx              tool registry, shell, all 14 workbenches
+  components/ui.tsx    primitives (Button/Input/Select/Combobox/Tabs/Panel/Notice/EmptyState/Modal/…)
+  lib/i18n.ts          345 bilingual strings + provider + hooks
+  lib/chains.ts        chain registry and endpoint resolution
+  lib/rpc.ts           read-only JSON-RPC transport
+  lib/evm.ts           storage slot maths, ABI decoding, Solidity source parsing
+  index.css            design tokens and base styles
+```
+
+**Dependency constraint**: the shipped bundle contains only React, React DOM, and lucide-react icons. No router, no state library, no i18n library, no component library — those are hand-written, to keep the bundle small and the behaviour predictable.
+
+**Not built (planned)**: backend RPC proxy, `/api/*` server routes, IP rate limiting, Next.js / next-intl migration. The current architecture is a static site; none of these exist.
+
+### 9. Chain support
+
+| Chain | chainId | Default endpoint | Native |
+|---|---|---|---|
+| Ethereum Mainnet | 1 | Alchemy / Infura BYOK | ETH |
+| Sepolia Testnet | 11155111 | Alchemy / Infura BYOK | ETH |
+| Polygon Mainnet | 137 | Alchemy / Infura BYOK | POL |
+| BNB Smart Chain | 56 | Alchemy BYOK | BNB |
+| Anubis Mainnet | 6714 | `https://rpc.anubispace.org` (keyless) | DAI |
+| Custom EVM chain | user supplied | user supplied RPC URL | — |
+
+**Endpoint priority**: RPC URL override → bundled public RPC → Alchemy key → Infura key. A provider key is never used on a chain that provider does not serve, so a misconfiguration errors instead of silently switching networks.
+
+**Every read does the same three things**:
+
+1. Verify `eth_chainId`; abort on mismatch.
+2. Resolve `latest` to a concrete block number.
+3. Report chainId, endpoint host, and the block read.
+
+**RPC methods**: the app only calls read-only methods (`eth_chainId`, `eth_getStorageAt`, `eth_blockNumber`, and similar). There is no code path that sends a transaction.
+
+### 10. Privacy and storage
+
+**`localStorage` contents**:
+
+- `linsea-react-state` — active section, active tool, theme, language, recent tools (8 stored, 5 shown), settings snapshot.
+- `linsea-tools-settings` — Alchemy / Infura keys, default chain, custom chain and RPC URL, privacy-mode flag.
+
+**Never stored**: contract addresses you entered, calldata, JWTs, plaintext or ciphertext, compared text, calculation history.
+
+**Privacy First Mode**: one switch disables RPC, ads, and remote lookups. In that mode chain tools refuse to run and say so, rather than degrading silently.
+
+**No telemetry**: no analytics, no error reporting, no third-party scripts.
+
+### 11. Ad slot
+
+The right rail keeps a `300 × 250` placeholder with no ad code in it. It shows as disabled in Privacy First Mode.
+
+Constraints if it is ever filled: no third-party scripts, no behavioural targeting, no reading of local calculation content.
+
+### 12. Testing and build
+
+- `npm test` — 56 unit tests covering chain resolution (endpoint priority, custom chain validation, URL normalisation), the JSON-RPC transport (batching, sequential fallback, error decoding), and the ABI codec (type parsing, selector computation, static and dynamic argument encoding, return decoding, archive-error recognition).
+- `npm run build` — gated on `tsc -b`; a type error fails the build. Output in `dist/`.
+- Current bundle: JS ≈ 346 kB (gzip ≈ 108 kB), CSS ≈ 24 kB (gzip ≈ 5.5 kB).
+
+### 13. Explicitly out of scope
+
+- Anything involving private keys, signing, or sending transactions.
+- Any server-side processing of user data.
+- Card generation, credential stuffing, or risk-control bypass tooling.
+- Marketing landing pages.
+
+### 14. One line
+
+14 read-only tools, a four-layer palette, English and Chinese as peers, static deployment, no backend.
