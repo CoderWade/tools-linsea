@@ -18,10 +18,12 @@ import {
   Settings2,
   ShieldCheck,
   Sun,
+  Terminal,
 } from "lucide-react";
 import { ReactNode, useEffect, useMemo, useState } from "react";
 import { Button, Combobox, CommandInput, CopyButton, EmptyState, Field, IconButton, Input, Modal, Notice, Panel, ResultRows, Select, Tabs, Textarea, cn } from "./components/ui";
 import { LanguageContext, useLang, useT, type Lang, type StringKey, t } from "./lib/i18n";
+import { decodeValues, encodeCall, formatAbiType, looksLikeArchiveGap, parseSignature, splitArgs } from "./lib/abi";
 import {
   decodeStorageValue,
   findStorageEntry,
@@ -40,6 +42,7 @@ type ToolId =
   | "storage-slot"
   | "source-layout"
   | "proxy-slot"
+  | "eth-call"
   | "calldata-decoder"
   | "unit-converter"
   | "selector-finder"
@@ -116,6 +119,7 @@ const tools: Tool[] = [
   { id: "storage-slot", category: "reverse", name: "Storage Slot Inspector", zh: "存储槽检查器", description: { en: "Read raw slots and probe mapping keys with read-only RPC.", zh: "读取原始存储槽，并通过只读 RPC 探测 mapping 键。" }, keywords: ["slot", "storage", "mapping", "eth_getStorageAt", "存储槽", "槽位"], badges: { en: ["Raw read", "Mapping probe"], zh: ["原始读取", "mapping 探测"] }, icon: <Layers3 /> },
   { id: "source-layout", category: "reverse", name: "Source Layout Resolver", zh: "源码槽位解析器", description: { en: "Paste verified or decompiled Solidity source to resolve names into storage slots.", zh: "粘贴已验证或反编译的 Solidity 源码，将变量名解析为存储槽位。" }, keywords: ["source", "layout", "decompiled", "verified", "slot", "源码", "槽位"], badges: { en: ["Local first", "Layout aware"], zh: ["本地优先", "布局感知"] }, icon: <FileCode2 /> },
   { id: "proxy-slot", category: "reverse", name: "Proxy Slot Finder", zh: "代理槽探测器", description: { en: "Probe ERC-1967 implementation/admin/beacon slots.", zh: "探测 ERC-1967 的 implementation、admin 与 beacon 槽位。" }, keywords: ["proxy", "erc1967", "beacon", "implementation", "代理", "实现地址"], badges: { en: ["Read only", "RPC"], zh: ["只读", "RPC"] }, icon: <Route /> },
+  { id: "eth-call", category: "reverse", name: "Read Contract (eth_call)", zh: "合约调用读取", description: { en: "Call any view function by signature and read the decoded result, with optional multi-block comparison.", zh: "按函数签名调用任意 view 函数并解码返回值，可选多区块对比。" }, keywords: ["eth_call", "call", "contract", "view", "abi", "getter", "调用", "读取", "合约", "合约调用"], badges: { en: ["eth_call", "Multi-block"], zh: ["eth_call", "多区块"] }, icon: <Terminal /> },
   { id: "calldata-decoder", category: "reverse", name: "Calldata Decoder", zh: "Calldata 解码器", description: { en: "Split selector and ABI words, then inspect calldata structure.", zh: "拆分 selector 与 ABI 参数，查看 calldata 结构。" }, keywords: ["calldata", "selector", "abi"], badges: { en: ["Local", "ABI words"], zh: ["本地", "ABI 参数"] }, icon: <Code2 /> },
   { id: "unit-converter", category: "reverse", name: "Unit Converter", zh: "单位转换器", description: { en: "Convert Wei, Gwei, Ether, and token decimals safely.", zh: "在 wei、gwei、ether 与代币精度之间安全换算。" }, keywords: ["wei", "gwei", "ether", "decimals", "单位", "精度"], badges: { en: ["BigInt", "Bidirectional"], zh: ["BigInt", "双向换算"] }, icon: <Calculator /> },
   { id: "selector-finder", category: "reverse", name: "4Byte / Selector Finder", zh: "4Byte / Selector 查询", description: { en: "Generate selectors and event topic0 locally.", zh: "本地生成函数 selector 与事件 topic0。" }, keywords: ["4byte", "selector", "topic0", "function", "函数", "事件"], badges: { en: ["Keccak", "Local"], zh: ["Keccak", "本地"] }, icon: <Fingerprint /> },
@@ -355,6 +359,7 @@ function ToolWorkbench({ tool, settings }: { tool: Tool; settings: Settings }) {
     case "storage-slot": return <StorageSlotInspector settings={settings} />;
     case "source-layout": return <SourceLayoutResolver />;
     case "proxy-slot": return <ProxySlotFinder settings={settings} />;
+    case "eth-call": return <EthCallInspector settings={settings} />;
     case "calldata-decoder": return <CalldataDecoder />;
     case "unit-converter": return <UnitConverter />;
     case "selector-finder": return <SelectorFinder />;
@@ -1259,6 +1264,164 @@ function ProxySlotFinder({ settings }: { settings: Settings }) {
     }
   };
   return <Workbench><Panel title={tr("proxy.panel")}><div className="grid gap-4"><Field label={tr("field.proxyAddress")}><Input className="mono" value={address} onChange={(e) => setAddress(e.target.value)} placeholder="0x..." /></Field><Notice>{tr("proxy.notice")}</Notice><Button variant="primary" onClick={probe}>{tr("proxy.action.probe")}</Button></div></Panel><Panel title={tr("panel.readout")}>{output}</Panel></Workbench>;
+}
+
+function EthCallInspector({ settings }: { settings: Settings }) {
+  const tr = useT();
+  const lang = useLang();
+  const [contract, setContract] = useState("");
+  const [signatureText, setSignatureText] = useState("reflectionFromToken(uint256,bool)");
+  const [argsText, setArgsText] = useState("1, false");
+  const [blocksText, setBlocksText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [output, setOutput] = useState<ReactNode>(
+    <EmptyState title={tr("call.empty.title")} hint={tr("call.empty.hint")} />,
+  );
+
+  // Everything derived from the signature is computed here, so the selector and
+  // the preview update while typing instead of only on submit.
+  const parsed = useMemo(() => {
+    try {
+      const signature = parseSignature(signatureText);
+      const selector = keccak256Hex(signature.canonical).slice(0, 8);
+      const args = splitArgs(argsText);
+      const call = encodeCall(signature, args, selector);
+      return { signature, selector, args, call, error: "" };
+    } catch (error) {
+      return { signature: null, selector: "", args: [], call: null, error: (error as Error).message };
+    }
+  }, [signatureText, argsText]);
+
+  const blocks = useMemo(() => {
+    const list = splitArgs(blocksText);
+    return list.length ? list : ["latest"];
+  }, [blocksText]);
+
+  const run = async () => {
+    setBusy(true);
+    try {
+      if (settings.privacyMode) throw new Error(tr("storage.err.privacy"));
+      if (!/^0x[a-fA-F0-9]{40}$/.test(contract)) throw new Error(tr("storage.err.address"));
+      if (!parsed.signature || !parsed.call) throw new Error(parsed.error || tr("call.err.signature"));
+
+      const readings: Array<{ block: string; raw: string; values: string[] }> = [];
+      for (const blockTag of blocks) {
+        const session = await openRpcSession(settings, blockTag);
+        let raw: string;
+        try {
+          raw = await rpcRequest(session.endpoint, "eth_call", [{ to: contract, data: parsed.call.calldata }, session.blockTag]);
+        } catch (error) {
+          const message = (error as Error).message;
+          // Public nodes answer historical blocks with a handful of specific
+          // messages; say what they mean instead of echoing the node text.
+          if (looksLikeArchiveGap(message)) {
+            throw new Error(tr("call.err.archive", { block: session.blockNumber !== null ? `#${session.blockNumber}` : blockTag, message }));
+          }
+          throw error;
+        }
+        const values = parsed.signature.outputs.length
+          ? decodeValues(parsed.signature.outputs, raw)
+          : [];
+        readings.push({ block: session.blockNumber !== null ? `#${session.blockNumber}` : session.blockTag, raw, values });
+      }
+
+      setOutput(
+        <div className="grid gap-4">
+          <ResultRows rows={[
+            [tr("row.contract"), contract],
+            [tr("row.signature"), parsed.signature.canonical],
+            [tr("row.selector"), `0x${parsed.selector}`],
+            [tr("row.arguments"), parsed.args.length ? parsed.args.join(", ") : tr("common.none")],
+            [tr("row.returnTypes"), parsed.signature.outputs.length ? parsed.signature.outputs.map(formatAbiType).join(", ") : tr("common.none")],
+          ]} />
+          {readings.map((reading) => (
+            <div key={reading.block} className="grid gap-2 rounded-tool border border-line bg-panel p-3">
+              <div className="flex flex-wrap items-baseline justify-between gap-2">
+                <span className="font-mono text-[13px] font-semibold text-text">{reading.block}</span>
+                <span className="text-[11px] text-faint">{tr("call.decodedCount", { count: reading.values.length })}</span>
+              </div>
+              {reading.values.length ? (
+                <div className="grid gap-1">
+                  {reading.values.map((value, index) => (
+                    <div key={index} className="grid grid-cols-[minmax(0,90px)_minmax(0,1fr)_auto] items-center gap-2 max-sm:grid-cols-1">
+                      <span className="font-mono text-[11px] text-faint">[{index}]</span>
+                      <code className="break-all font-mono text-[13px] text-text">{value}</code>
+                      <CopyButton value={value} />
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="grid gap-1.5">
+                  <Notice>{tr("call.noOutput")}</Notice>
+                  {/* Without declared return types there is nothing to decode,
+                      but the caller still needs the number. Surface it as both
+                      hex and decimal rather than burying it in raw data. */}
+                  <div className="grid gap-1 rounded-ui border border-line bg-surface px-3 py-2">
+                    <span className="text-[11px] text-faint">{tr("call.asUint")}</span>
+                    <code className="break-all font-mono text-[13px] text-text">{String(BigInt(reading.raw))}</code>
+                    <code className="break-all font-mono text-[11px] text-muted">{reading.raw}</code>
+                  </div>
+                </div>
+              )}
+              <details className="text-[11px] text-faint">
+                <summary className="cursor-pointer">{tr("call.rawData")}</summary>
+                <code className="mt-1 block break-all font-mono">{reading.raw}</code>
+              </details>
+            </div>
+          ))}
+          {readings.length > 1 ? (
+            <Notice tone={readings.every((r) => r.raw === readings[0].raw) ? "default" : "warn"}>
+              {readings.every((r) => r.raw === readings[0].raw)
+                ? tr("call.sameAcrossBlocks")
+                : tr("call.differsAcrossBlocks")}
+            </Notice>
+          ) : null}
+        </div>,
+      );
+    } catch (error) {
+      setOutput(<Notice tone="danger">{(error as Error).message}</Notice>);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Workbench>
+      <Panel title={tr("call.panel")}>
+        <div className="grid gap-4">
+          <Field label={tr("field.contractAddress")}>
+            <Input className="mono" value={contract} onChange={(event) => setContract(event.target.value)} placeholder="0x..." />
+          </Field>
+          <Field label={tr("field.signature")}>
+            <Input className="mono" value={signatureText} onChange={(event) => setSignatureText(event.target.value)} placeholder="balanceOf(address) returns (uint256)" />
+          </Field>
+          <Field label={tr("field.arguments")}>
+            <Textarea className="mono min-h-[90px]" value={argsText} onChange={(event) => setArgsText(event.target.value)} placeholder={tr("call.argsPlaceholder")} />
+          </Field>
+          <Field label={tr("field.blocks")}>
+            <Textarea className="mono min-h-[70px]" value={blocksText} onChange={(event) => setBlocksText(event.target.value)} placeholder={tr("call.blocksPlaceholder")} />
+          </Field>
+
+          {parsed.error ? (
+            <Notice tone="danger">{parsed.error}</Notice>
+          ) : (
+            <div className="grid gap-1.5 rounded-ui border border-line bg-panel p-3 text-[11px]">
+              <span className="text-faint">{tr("row.selector")}</span>
+              <code className="break-all font-mono text-accent">0x{parsed.selector}</code>
+              <span className="mt-1 text-faint">{tr("call.calldataPreview")}</span>
+              <code className="break-all font-mono text-muted">{parsed.call?.calldata}</code>
+            </div>
+          )}
+
+          <Notice>{tr("call.notice")}</Notice>
+          <Button variant="primary" onClick={run} disabled={busy || Boolean(parsed.error)}>
+            {busy ? tr("call.action.running") : tr("call.action.run")}
+          </Button>
+        </div>
+      </Panel>
+      <Panel title={tr("panel.readout")}>{output}</Panel>
+    </Workbench>
+  );
 }
 
 function EncryptionTool() {
