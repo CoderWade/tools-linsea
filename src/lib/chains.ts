@@ -1,3 +1,18 @@
+/**
+ * A publicly reachable, keyless RPC endpoint.
+ *
+ * `archive` marks endpoints verified to serve historical state. Everything
+ * below was probed with eth_chainId and an eth_call at a recent block; the
+ * archive flag additionally required a successful eth_call at an old block.
+ * Endpoints drift, so the UI lets the user pick and reports failures plainly.
+ */
+export type FreeEndpoint = {
+  url: string;
+  label: string;
+  archive: boolean;
+  note: { en: string; zh: string };
+};
+
 export type ChainConfig = {
   id: string;
   chainId: number;
@@ -8,6 +23,7 @@ export type ChainConfig = {
   infura?: string;
   explorer?: string;
   nativeSymbol: string;
+  freeEndpoints: readonly FreeEndpoint[];
 };
 
 export type EndpointSource = "custom" | "chain" | "alchemy" | "infura";
@@ -32,11 +48,78 @@ export type RpcSettings = {
 export const CUSTOM_CHAIN_ID = "custom";
 
 export const CHAINS: readonly ChainConfig[] = [
-  { id: "ethereum", chainId: 1, label: "Ethereum Mainnet", shortLabel: "Ethereum", alchemy: "eth-mainnet", infura: "mainnet", explorer: "https://etherscan.io", nativeSymbol: "ETH" },
-  { id: "sepolia", chainId: 11155111, label: "Sepolia Testnet", shortLabel: "Sepolia", alchemy: "eth-sepolia", infura: "sepolia", explorer: "https://sepolia.etherscan.io", nativeSymbol: "ETH" },
-  { id: "polygon", chainId: 137, label: "Polygon Mainnet", shortLabel: "Polygon", alchemy: "polygon-mainnet", infura: "polygon-mainnet", explorer: "https://polygonscan.com", nativeSymbol: "POL" },
-  { id: "bsc", chainId: 56, label: "BNB Smart Chain", shortLabel: "BSC", alchemy: "bnb-mainnet", explorer: "https://bscscan.com", nativeSymbol: "BNB" },
-  { id: "anubis", chainId: 6714, label: "Anubis Mainnet", shortLabel: "Anubis", rpcUrl: "https://rpc.anubispace.org", explorer: "https://browser.anubispace.org", nativeSymbol: "DAI" },
+  {
+    id: "ethereum",
+    chainId: 1,
+    label: "Ethereum Mainnet",
+    shortLabel: "Ethereum",
+    alchemy: "eth-mainnet",
+    infura: "mainnet",
+    explorer: "https://etherscan.io",
+    nativeSymbol: "ETH",
+    freeEndpoints: [
+      { url: "https://ethereum-rpc.publicnode.com", label: "PublicNode", archive: false, note: { en: "Live state only; historical blocks need archive", zh: "仅最新状态，历史区块需 archive 节点" } },
+      { url: "https://eth.drpc.org", label: "dRPC", archive: true, note: { en: "Serves historical state; public rate limit", zh: "支持历史状态，公共端点有限流" } },
+      { url: "https://cloudflare-eth.com", label: "Cloudflare", archive: false, note: { en: "Fast, but rejects some eth_call requests", zh: "速度快，但部分 eth_call 会被拒绝" } },
+      { url: "https://eth-mainnet.public.blastapi.io", label: "Blast", archive: true, note: { en: "Serves historical state; rate limited", zh: "支持历史状态，有限流" } },
+    ],
+  },
+  {
+    id: "sepolia",
+    chainId: 11155111,
+    label: "Sepolia Testnet",
+    shortLabel: "Sepolia",
+    alchemy: "eth-sepolia",
+    infura: "sepolia",
+    explorer: "https://sepolia.etherscan.io",
+    nativeSymbol: "ETH",
+    freeEndpoints: [
+      { url: "https://ethereum-sepolia-rpc.publicnode.com", label: "PublicNode", archive: false, note: { en: "Live state only", zh: "仅最新状态" } },
+    ],
+  },
+  {
+    id: "polygon",
+    chainId: 137,
+    label: "Polygon Mainnet",
+    shortLabel: "Polygon",
+    alchemy: "polygon-mainnet",
+    infura: "polygon-mainnet",
+    explorer: "https://polygonscan.com",
+    nativeSymbol: "POL",
+    freeEndpoints: [
+      { url: "https://polygon-bor-rpc.publicnode.com", label: "PublicNode", archive: false, note: { en: "Live state only", zh: "仅最新状态" } },
+      { url: "https://polygon.drpc.org", label: "dRPC", archive: false, note: { en: "Public rate limit", zh: "公共端点有限流" } },
+    ],
+  },
+  {
+    id: "bsc",
+    chainId: 56,
+    label: "BNB Smart Chain",
+    shortLabel: "BSC",
+    alchemy: "bnb-mainnet",
+    explorer: "https://bscscan.com",
+    nativeSymbol: "BNB",
+    freeEndpoints: [
+      { url: "https://bsc-dataseed1.bnbchain.org", label: "BSC Dataseed 1", archive: false, note: { en: "Official BNB Chain seed node; live state only", zh: "BNB Chain 官方种子节点，仅最新状态" } },
+      { url: "https://bsc-dataseed2.bnbchain.org", label: "BSC Dataseed 2", archive: false, note: { en: "Official BNB Chain seed node; live state only", zh: "BNB Chain 官方种子节点，仅最新状态" } },
+      { url: "https://rpc.48.club", label: "48.club", archive: false, note: { en: "Community node; live state only", zh: "社区节点，仅最新状态" } },
+      { url: "https://bsc-rpc.publicnode.com", label: "PublicNode", archive: false, note: { en: "Live state only; archive needs a token", zh: "仅最新状态，archive 需令牌" } },
+      { url: "https://bsc-mainnet.public.blastapi.io", label: "Blast", archive: true, note: { en: "Serves historical state; rate limited", zh: "支持历史状态，有限流" } },
+      { url: "https://bsc-mainnet.nodereal.io/v1/64a9df0874fb4a93b9d0a3849de012d3", label: "NodeReal (shared key)", archive: true, note: { en: "Public demo key; historical state works", zh: "公共演示 Key，支持历史状态" } },
+    ],
+  },
+  {
+    id: "anubis",
+    chainId: 6714,
+    label: "Anubis Mainnet",
+    shortLabel: "Anubis",
+    rpcUrl: "https://rpc.anubispace.org",
+    explorer: "https://browser.anubispace.org",
+    nativeSymbol: "DAI",
+    freeEndpoints: [
+      { url: "https://rpc.anubispace.org", label: "Anubis official", archive: false, note: { en: "Official keyless endpoint", zh: "官方端点，无需 Key" } },
+    ],
+  },
 ] as const;
 
 const SOURCE_LABELS: Record<EndpointSource, string> = {
@@ -130,6 +213,7 @@ function customChain(settings: RpcSettings): ChainConfig {
     label: settings.customChainLabel.trim() || "Custom EVM chain",
     shortLabel: "Custom",
     nativeSymbol: "native",
+    freeEndpoints: [],
   };
 }
 

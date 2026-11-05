@@ -1,3 +1,5 @@
+import type { StringKey } from "./i18n";
+
 const MASK_64 = (1n << 64n) - 1n;
 const KECCAK_ROTATION = [
   [0, 36, 3, 41, 18],
@@ -15,17 +17,30 @@ const KECCAK_RC = [
   0x8000000080008081n, 0x8000000000008080n, 0x0000000080000001n, 0x8000000080008008n,
 ] as const;
 
+/**
+ * One resolved storage variable.
+ *
+ * `noteKey`/`noteParams` are deliberately not rendered text: the same parser
+ * runs in both languages, so the caller translates with its own locale.
+ *
+ * `reliable` is false when an earlier variable in the layout had an unknown
+ * span. Slot numbers after such a point are guesses, and the UI must say so —
+ * silently printing a wrong slot is worse than printing none.
+ */
 export type StorageEntry = {
   name: string;
   type: string;
   kind: string;
   keyType?: string;
   valueType?: string;
+  nestedMapping?: boolean;
   slot: bigint | null;
   offset: number | null;
-  note: string;
+  noteKey: StringKey;
+  noteParams?: Record<string, string | number>;
   constant?: boolean;
   immutable?: boolean;
+  reliable: boolean;
 };
 
 export type StorageLayout = {
@@ -33,9 +48,45 @@ export type StorageLayout = {
   contractName?: string;
   selectionNote?: string;
   entries: StorageEntry[];
+  /** True when at least one variable had an unresolvable size. */
+  hasUnknownSpans: boolean;
 };
 
-type ParsedContract = { kind: string; name: string; bases: string[]; statements: string[] };
+type ParsedContract = {
+  kind: string;
+  name: string;
+  bases: string[];
+  statements: string[];
+  structs: Map<string, string[]>;
+  enums: Set<string>;
+  userTypes: Map<string, string>;
+};
+
+/**
+ * Everything needed to size a type. Solidity storage sizing depends on
+ * user-declared types, so a type name alone is not enough.
+ */
+type TypeRegistry = {
+  structs: Map<string, string[]>;
+  enums: Set<string>;
+  userTypes: Map<string, string>;
+  declarations: Set<string>;
+  structSpanCache: Map<string, bigint | null>;
+  computing: Set<string>;
+};
+
+type TypeInfo = {
+  kind: "static" | "mapping" | "dynamic" | "dynamic-array" | "fixed-array" | "struct" | "unknown";
+  /** For "static": bytes occupied. */
+  sizeBytes?: number;
+  /** For every non-static kind: how many whole slots it claims. Null when unknown. */
+  slotSpan?: bigint | null;
+  keyType?: string;
+  valueType?: string;
+  nestedMapping?: boolean;
+  noteKey: StringKey;
+  noteParams?: Record<string, string | number>;
+};
 
 export function keccak256Hex(input: Uint8Array | string) {
   const bytes = typeof input === "string" ? new TextEncoder().encode(input) : input;
@@ -140,6 +191,18 @@ export function decodeStorageValue(rawValue: string, valueType: string) {
   return rawValue;
 }
 
+/**
+ * A nested mapping (mapping(K1 => mapping(K2 => V))) never stores anything at
+ * the slot derived from a single key — that derived slot is the *location of
+ * the inner mapping object*, and mappings are not materialised on chain. Any
+ * read there is guaranteed to return zero, so callers must refuse rather than
+ * report a misleading zero.
+ */
+export function isNestedMappingType(type: string) {
+  const parsed = splitMappingTypes(normalizeSolidityType(type));
+  return parsed ? /^mapping\(/i.test(normalizeSolidityType(parsed[1])) : false;
+}
+
 export function parseMappingDeclaration(input: string) {
   const normalized = input.trim().replace(/\s+/g, " ");
   if (!/^mapping\s*\(/i.test(normalized)) return null;
@@ -151,7 +214,16 @@ export function parseMappingDeclaration(input: string) {
   if (!mappingTypes) return null;
   const tail = normalized.slice(closeIndex + 1).replace(/\b(?:public|private|internal|external|constant|immutable|virtual|override)\b/gi, " ").trim();
   const name = tail.split("=")[0].trim().split(/\s+/).filter(Boolean).at(-1) || "mapping";
-  return { kind: "mapping", name, keyType: normalizeSolidityType(mappingTypes[0]), valueType: normalizeSolidityType(mappingTypes[1]), type: `mapping(${normalizeSolidityType(mappingTypes[0])} => ${normalizeSolidityType(mappingTypes[1])})` };
+  const keyType = normalizeSolidityType(mappingTypes[0]);
+  const valueType = normalizeSolidityType(mappingTypes[1]);
+  return {
+    kind: "mapping",
+    name,
+    keyType,
+    valueType,
+    nested: /^mapping\(/i.test(valueType),
+    type: `mapping(${keyType} => ${valueType})`,
+  };
 }
 
 export function parseSourceLayout(source: string, contractName = "", mode = "verified source"): StorageLayout {
@@ -159,13 +231,22 @@ export function parseSourceLayout(source: string, contractName = "", mode = "ver
   if (jsonLayout) return jsonLayout;
   const clean = stripSolidityComments(source);
   const contracts = parseContracts(clean);
-  if (!contracts.length) return buildLayout(splitTopLevelStatements(clean), mode);
+  if (!contracts.length) return buildLayout(splitTopLevelStatements(clean), mode, createRegistry(contracts));
+
   const selected = selectContract(contracts, contractName);
   const map = new Map(contracts.map((contract) => [contract.name, contract]));
   const leafs = contracts.filter((contract) => contract.kind === "contract" && !contracts.some((item) => item.bases.includes(contract.name)));
-  const statements = collectStatements(selected, map, new Set<string>());
+
+  // Inheritance chain order matters for both storage order and type lookup:
+  // the chain is walked base-first, so re-registering in that order lets a
+  // derived contract's own declarations win over a same-named base type.
+  const chain = collectChain(selected, map);
+  const registry = createRegistry(contracts);
+  for (const contract of chain) registerContractTypes(registry, contract);
+
+  const statements = collectStatements(selected, map);
   return {
-    ...buildLayout(statements, mode),
+    ...buildLayout(statements, mode, registry),
     contractName: selected.name,
     selectionNote: contractName.trim()
       ? `requested contract: ${selected.name}`
@@ -181,21 +262,45 @@ function tryParseStorageLayoutJson(text: string): StorageLayout | null {
     if (!Array.isArray(payload.storage)) return null;
     return {
       sourceType: "storageLayout JSON",
+      hasUnknownSpans: false,
       entries: payload.storage.map((entry) => {
         const label = payload.types?.[entry.type]?.label || entry.type;
-        const info = classifyType(label);
+        const info = classifyType(label, emptyRegistry());
         return {
           name: entry.label || "slot",
           type: label,
-          ...info,
+          kind: info.kind === "static" ? "static" : info.kind,
+          keyType: info.keyType,
+          valueType: info.valueType,
+          nestedMapping: info.nestedMapping,
+          noteKey: info.noteKey,
+          noteParams: info.noteParams,
           slot: BigInt(entry.slot || "0"),
           offset: Number(entry.offset || 0),
+          reliable: true,
         };
       }),
     };
   } catch {
     return null;
   }
+}
+
+function emptyRegistry(): TypeRegistry {
+  return { structs: new Map(), enums: new Set(), userTypes: new Map(), declarations: new Set(), structSpanCache: new Map(), computing: new Set() };
+}
+
+function createRegistry(contracts: ParsedContract[]): TypeRegistry {
+  const registry = emptyRegistry();
+  for (const contract of contracts) registerContractTypes(registry, contract);
+  return registry;
+}
+
+function registerContractTypes(registry: TypeRegistry, contract: ParsedContract) {
+  registry.declarations.add(contract.name);
+  for (const [name, members] of contract.structs) registry.structs.set(name, members);
+  for (const name of contract.enums) registry.enums.add(name);
+  for (const [name, underlying] of contract.userTypes) registry.userTypes.set(name, underlying);
 }
 
 function parseContracts(clean: string) {
@@ -207,10 +312,50 @@ function parseContracts(clean: string) {
     const close = findMatching(clean, open, "{", "}");
     if (close < 0) continue;
     const body = clean.slice(open + 1, close);
-    contracts.push({ kind: match[1].toLowerCase(), name: match[2], bases: parseBases(match[3] || ""), statements: splitTopLevelStatements(body) });
+    contracts.push({
+      kind: match[1].toLowerCase(),
+      name: match[2],
+      bases: parseBases(match[3] || ""),
+      statements: splitTopLevelStatements(body),
+      structs: parseStructs(body),
+      enums: parseEnums(body),
+      userTypes: parseUserTypes(body),
+    });
     matcher.lastIndex = close + 1;
   }
   return contracts;
+}
+
+/** `struct S { uint256 a; }` — members are split the same way as state variables. */
+function parseStructs(body: string) {
+  const structs = new Map<string, string[]>();
+  const matcher = /\bstruct\s+([A-Za-z_$][\w$]*)\s*\{/g;
+  let match: RegExpExecArray | null;
+  while ((match = matcher.exec(body))) {
+    const open = matcher.lastIndex - 1;
+    const close = findMatching(body, open, "{", "}");
+    if (close < 0) continue;
+    structs.set(match[1], splitTopLevelStatements(body.slice(open + 1, close)));
+    matcher.lastIndex = close + 1;
+  }
+  return structs;
+}
+
+function parseEnums(body: string) {
+  const enums = new Set<string>();
+  const matcher = /\benum\s+([A-Za-z_$][\w$]*)\s*\{[^}]*\}/g;
+  let match: RegExpExecArray | null;
+  while ((match = matcher.exec(body))) enums.add(match[1]);
+  return enums;
+}
+
+/** User-defined value types: `type Price is uint128;` */
+function parseUserTypes(body: string) {
+  const types = new Map<string, string>();
+  const matcher = /\btype\s+([A-Za-z_$][\w$]*)\s+is\s+([^;]+);/g;
+  let match: RegExpExecArray | null;
+  while ((match = matcher.exec(body))) types.set(match[1], normalizeSolidityType(match[2]));
+  return types;
 }
 
 function parseBases(header: string) {
@@ -229,71 +374,269 @@ function selectContract(contracts: ParsedContract[], requested: string) {
   return contracts.filter((contract) => contract.kind === "contract" && !inherited.has(contract.name)).at(-1) || contracts.filter((contract) => contract.kind === "contract").at(-1) || contracts[0];
 }
 
-function collectStatements(contract: { name: string; bases: string[]; statements: string[] }, map: Map<string, { name: string; bases: string[]; statements: string[] }>, visiting: Set<string>): string[] {
-  if (visiting.has(contract.name)) return [];
-  visiting.add(contract.name);
-  const inherited = contract.bases.flatMap((base) => {
-    const item = map.get(base);
-    return item ? collectStatements(item, map, visiting) : [];
-  });
-  visiting.delete(contract.name);
-  return [...inherited, ...contract.statements];
+/** Base-first order, shared bases included once (matches Solidity's linearisation closely enough for storage order). */
+function collectChain(contract: ParsedContract, map: Map<string, ParsedContract>): ParsedContract[] {
+  const seen = new Set<string>();
+  const order: ParsedContract[] = [];
+  const visit = (current: ParsedContract) => {
+    if (seen.has(current.name)) return;
+    seen.add(current.name);
+    for (const base of current.bases) {
+      const parent = map.get(base);
+      if (parent) visit(parent);
+    }
+    order.push(current);
+  };
+  visit(contract);
+  return order;
 }
 
-function buildLayout(statements: string[], sourceType: string): StorageLayout {
+/**
+ * Concatenates inherited state variables before the contract's own.
+ *
+ * The `seen` set is shared across the whole walk, not scoped to the current
+ * recursion path: a base contract reached through two branches (diamond
+ * inheritance) must contribute its variables exactly once. Scoping the guard
+ * to the path let `d` be emitted twice and shifted every later slot.
+ */
+function collectStatements(contract: ParsedContract, map: Map<string, ParsedContract>): string[] {
+  const seen = new Set<string>();
+  const statements: string[] = [];
+  const visit = (current: ParsedContract) => {
+    if (seen.has(current.name)) return;
+    seen.add(current.name);
+    for (const base of current.bases) {
+      const parent = map.get(base);
+      if (parent) visit(parent);
+    }
+    statements.push(...current.statements);
+  };
+  visit(contract);
+  return statements;
+}
+
+function buildLayout(statements: string[], sourceType: string, registry: TypeRegistry): StorageLayout {
   const entries: StorageEntry[] = [];
   let slot = 0n;
   let offset = 0;
+  let reliable = true;
+  let hasUnknownSpans = false;
+
   for (const statement of statements) {
     const parsed = parseStateStatement(statement);
     if (!parsed) continue;
-    const layout = classifyType(parsed.type);
+    const info = classifyType(parsed.type, registry);
     if (parsed.constant || parsed.immutable) {
-      entries.push({ ...parsed, ...layout, slot: null, offset: null, note: parsed.constant ? "constant: not stored on-chain" : "immutable: stored in bytecode" });
+      entries.push({
+        ...parsed,
+        kind: info.kind,
+        keyType: info.keyType,
+        valueType: info.valueType,
+        nestedMapping: info.nestedMapping,
+        noteKey: parsed.constant ? "storage.note.constant" : "storage.note.immutable",
+        slot: null,
+        offset: null,
+        reliable: true,
+      });
       continue;
     }
-    const placed = place(slot, offset, layout);
+    const placed = place(slot, offset, info);
     slot = placed.nextSlot;
     offset = placed.nextOffset;
-    entries.push({ ...parsed, ...layout, slot: placed.slot, offset: placed.offset });
+    if (!placed.reliable) {
+      reliable = false;
+      hasUnknownSpans = true;
+    }
+    entries.push({
+      ...parsed,
+      kind: info.kind === "static" ? "static" : info.kind,
+      keyType: info.keyType,
+      valueType: info.valueType,
+      nestedMapping: info.nestedMapping,
+      noteKey: info.noteKey,
+      noteParams: info.noteParams,
+      slot: placed.slot,
+      offset: placed.offset,
+      reliable,
+    });
   }
-  return { sourceType, entries };
+  return { sourceType, entries, hasUnknownSpans };
 }
 
 function parseStateStatement(statement: string) {
   const text = statement.trim().replace(/\s+/g, " ");
-  if (!text || /^(function|constructor|fallback|receive|modifier|event|error|struct|enum|using|import|pragma|contract|interface|library|assembly)\b/i.test(text)) return null;
+  if (!text) return null;
+  // `function name(...)` is a declaration to skip; `function(...)` with no name
+  // is a function-*type* state variable, which does occupy storage.
+  if (/^function\s+[A-Za-z_$]/i.test(text)) return null;
+  if (/^(constructor|fallback|receive|modifier|event|error|struct|enum|using|import|pragma|contract|interface|library|assembly|type)\b/i.test(text)) return null;
   const constant = /\bconstant\b/i.test(text);
   const immutable = /\bimmutable\b/i.test(text);
   const mapping = parseMappingDeclaration(text);
   if (mapping) return { name: mapping.name, type: mapping.type, constant, immutable };
   const beforeInitializer = text.split("=")[0].trim();
-  if (/[(){}]/.test(beforeInitializer)) return null;
+  // Function-type variables contain parentheses, which are otherwise a signal
+  // that the statement is not a state variable. Allow them explicitly.
+  const isFunctionType = /^function\s*\(/i.test(beforeInitializer);
+  if (!isFunctionType && /[(){}]/.test(beforeInitializer)) return null;
+  if (/\{|\}/.test(beforeInitializer)) return null;
   const nameMatch = beforeInitializer.match(/([A-Za-z_$][\w$]*)$/);
   if (!nameMatch) return null;
   const name = nameMatch[1];
-  const type = beforeInitializer.slice(0, nameMatch.index).replace(/\b(?:public|private|internal|external|constant|immutable|virtual|override|storage|memory|calldata)\b/gi, " ").replace(/\s+/g, " ").trim();
-  if (!type || /\b(?:return|if|else|for|while|emit|delete|new|require|assert|revert)\b/i.test(type) || /[+\-*/%!<>&|?:]/.test(type)) return null;
+  const rawType = beforeInitializer.slice(0, nameMatch.index);
+  // `external` on a function type is not a visibility modifier to discard: it
+  // decides whether the variable is 24 bytes (address + selector) or 8 bytes
+  // (internal function id). Keep it for function types only.
+  const type = (isFunctionType
+    ? rawType.replace(/\b(?:public|private|constant|immutable|virtual|override|storage|memory|calldata)\b/gi, " ")
+    : rawType.replace(/\b(?:public|private|internal|external|constant|immutable|virtual|override|storage|memory|calldata)\b/gi, " ")
+  )
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!type) return null;
+  if (/\b(?:return|if|else|for|while|emit|delete|new|require|assert|revert)\b/i.test(type)) return null;
+  if (/[+\-*/%!<>&|?:]/.test(type)) return null;
   return { name, type: normalizeSolidityType(type), constant, immutable };
 }
 
-function classifyType(type: string) {
+function classifyType(type: string, registry: TypeRegistry): TypeInfo {
   const normalized = normalizeSolidityType(type);
+
   const mapping = splitMappingTypes(normalized);
-  if (mapping) return { kind: "mapping", keyType: normalizeSolidityType(mapping[0]), valueType: normalizeSolidityType(mapping[1]), slotSpan: 1n, note: "mapping base slot; values live at keccak256(key, base slot)" };
-  if (/^(bytes|string)$/i.test(normalized)) return { kind: "dynamic", slotSpan: 1n, note: "length/pointer slot; data is stored separately" };
-  if (/^\w+\[\]$/.test(normalized)) return { kind: "dynamic-array", slotSpan: 1n, note: "array length slot; elements start at keccak256(slot)" };
-  const fixed = normalized.match(/^(.+?)\[(\d+)\]$/);
-  if (fixed) return { kind: "fixed-array", slotSpan: BigInt(fixed[2]), note: `fixed array of ${fixed[2]} element(s)` };
+  if (mapping) {
+    const valueType = normalizeSolidityType(mapping[1]);
+    const nested = /^mapping\(/i.test(valueType);
+    return {
+      kind: "mapping",
+      keyType: normalizeSolidityType(mapping[0]),
+      valueType,
+      nestedMapping: nested,
+      slotSpan: 1n,
+      noteKey: nested ? "storage.note.mappingNested" : "storage.note.mappingBase",
+    };
+  }
+
+  if (/^(bytes|string)$/i.test(normalized)) {
+    return { kind: "dynamic", slotSpan: 1n, noteKey: "storage.note.dynamic" };
+  }
+
+  if (/^\w+\[\]$/.test(normalized)) {
+    return { kind: "dynamic-array", slotSpan: 1n, noteKey: "storage.note.dynamicArray" };
+  }
+
+  const fixed = normalized.match(/^(.+)\[(\d+)\]$/);
+  if (fixed) {
+    const count = Number(fixed[2]);
+    const element = classifyType(fixed[1], registry);
+    if (element.kind === "static" && element.sizeBytes) {
+      // Arrays occupy whole slots: ceil(count * size / 32), and the next
+      // variable starts after them without packing into leftover bytes.
+      const slots = BigInt(Math.ceil((count * element.sizeBytes) / 32));
+      return {
+        kind: "fixed-array",
+        slotSpan: slots,
+        noteKey: "storage.note.fixedArray",
+        noteParams: { count, slots: slots.toString() },
+      };
+    }
+    const elementSpan = element.slotSpan;
+    if (elementSpan != null && elementSpan > 0n) {
+      return {
+        kind: "fixed-array",
+        slotSpan: BigInt(count) * elementSpan,
+        noteKey: "storage.note.fixedArray",
+        noteParams: { count, slots: (BigInt(count) * elementSpan).toString() },
+      };
+    }
+    return { kind: "fixed-array", slotSpan: null, noteKey: "storage.note.unknownType", noteParams: { type: normalized } };
+  }
+
+  if (registry.enums.has(normalized)) {
+    // Enums are uint8: they pack with their neighbours.
+    return { kind: "static", sizeBytes: 1, slotSpan: 0n, noteKey: "storage.note.enum" };
+  }
+
+  if (registry.userTypes.has(normalized)) {
+    const underlying = registry.userTypes.get(normalized)!;
+    const info = classifyType(underlying, registry);
+    return { ...info, noteKey: "storage.note.udvt", noteParams: { type: normalized, underlying } };
+  }
+
+  if (registry.declarations.has(normalized)) {
+    // A state variable of contract/interface type is a 20-byte address.
+    return { kind: "static", sizeBytes: 20, slotSpan: 0n, noteKey: "storage.note.contractType" };
+  }
+
+  if (registry.structs.has(normalized)) {
+    const span = structSlotSpan(normalized, registry);
+    if (span == null) return { kind: "struct", slotSpan: null, noteKey: "storage.note.unknownType", noteParams: { type: normalized } };
+    return { kind: "struct", slotSpan: span, noteKey: "storage.note.struct", noteParams: { slots: span.toString() } };
+  }
+
+  if (/^function\s*\(/i.test(normalized)) {
+    // external functions store address + selector (24 bytes), internal ones
+    // store an 8-byte function id.
+    const size = /external/i.test(normalized) ? 24 : 8;
+    return { kind: "static", sizeBytes: size, slotSpan: 0n, noteKey: "storage.note.functionType", noteParams: { bytes: size } };
+  }
+
   const bytes = storageSize(normalized);
-  if (bytes !== null) return { kind: "static", sizeBytes: bytes, slotSpan: bytes === 32 ? 1n : 0n, note: bytes < 32 ? `packed in ${bytes} byte(s)` : "full 32-byte slot" };
-  return { kind: "complex", slotSpan: 1n, note: "complex type; use compiler storageLayout for exact nested layout" };
+  if (bytes !== null) {
+    return bytes === 32
+      ? { kind: "static", sizeBytes: 32, slotSpan: 1n, noteKey: "storage.note.fullSlot" }
+      : { kind: "static", sizeBytes: bytes, slotSpan: 0n, noteKey: "storage.note.packed", noteParams: { bytes } };
+  }
+
+  // Imported interface/contract types are the one unresolved case that can be
+  // guessed safely: the `IXxx` / `Xxx` naming convention plus capitalisation.
+  // Everything else is reported as unknown rather than assumed to be 32 bytes.
+  if (/^I[A-Z0-9]/.test(normalized)) {
+    return { kind: "static", sizeBytes: 20, slotSpan: 0n, noteKey: "storage.note.interfaceHeuristic" };
+  }
+
+  return { kind: "unknown", slotSpan: null, noteKey: "storage.note.unknownType", noteParams: { type: normalized } };
 }
 
-function place(cursorSlot: bigint, cursorOffset: number, layout: { kind: string; slotSpan?: bigint; sizeBytes?: number }) {
+/**
+ * Slots claimed by a struct: it starts at a slot boundary, occupies whole
+ * slots, and its members follow the same packing rules as state variables.
+ */
+function structSlotSpan(name: string, registry: TypeRegistry): bigint | null {
+  if (registry.structSpanCache.has(name)) return registry.structSpanCache.get(name)!;
+  if (registry.computing.has(name)) return null;
+  const members = registry.structs.get(name);
+  if (!members) return null;
+
+  registry.computing.add(name);
+  let slot = 0n;
+  let offset = 0;
+  let ok = true;
+  for (const member of members) {
+    const parsed = parseStateStatement(member);
+    if (!parsed) { ok = false; break; }
+    const info = classifyType(parsed.type, registry);
+    const placed = place(slot, offset, info);
+    if (!placed.reliable) { ok = false; break; }
+    slot = placed.nextSlot;
+    offset = placed.nextOffset;
+  }
+  registry.computing.delete(name);
+
+  const span = ok ? (offset > 0 ? slot + 1n : slot) : null;
+  registry.structSpanCache.set(name, span);
+  return span;
+}
+
+function place(cursorSlot: bigint, cursorOffset: number, layout: TypeInfo): { slot: bigint; offset: number; nextSlot: bigint; nextOffset: number; reliable: boolean } {
   if (layout.kind !== "static") {
     const slot = cursorOffset > 0 ? cursorSlot + 1n : cursorSlot;
-    return { slot, offset: 0, nextSlot: slot + (layout.slotSpan || 1n), nextOffset: 0 };
+    const span = layout.slotSpan;
+    if (span == null) {
+      // Unknown span: keep the best-guess slot but advance one slot so the
+      // caller can flag every following entry as unreliable.
+      return { slot, offset: 0, nextSlot: slot + 1n, nextOffset: 0, reliable: false };
+    }
+    return { slot, offset: 0, nextSlot: slot + span, nextOffset: 0, reliable: true };
   }
   const size = layout.sizeBytes || 32;
   let slot = cursorSlot;
@@ -304,8 +647,8 @@ function place(cursorSlot: bigint, cursorOffset: number, layout: { kind: string;
   }
   const nextOffset = offset + size;
   return size === 32 || nextOffset === 32
-    ? { slot, offset, nextSlot: slot + 1n, nextOffset: 0 }
-    : { slot, offset, nextSlot: slot, nextOffset };
+    ? { slot, offset, nextSlot: slot + 1n, nextOffset: 0, reliable: true }
+    : { slot, offset, nextSlot: slot, nextOffset, reliable: true };
 }
 
 function storageSize(type: string) {
@@ -314,7 +657,11 @@ function storageSize(type: string) {
   const bytes = type.match(/^bytes(\d+)$/i);
   if (bytes) return Number(bytes[1]) >= 1 && Number(bytes[1]) <= 32 ? Number(bytes[1]) : null;
   const integer = type.match(/^(u?int)(\d+)$/i);
-  if (integer) return Number(integer[2]) / 8;
+  if (integer) {
+    const bits = Number(integer[2]);
+    if (bits < 8 || bits > 256 || bits % 8 !== 0) return null;
+    return bits / 8;
+  }
   if (/^(uint|int)$/i.test(type)) return 32;
   return null;
 }
@@ -390,8 +737,55 @@ function findMatching(text: string, openIndex: number, open: string, close: stri
   return -1;
 }
 
+/**
+ * Removes comments while respecting string literals.
+ *
+ * A naive `//` strip deletes everything after the marker, so a constant such as
+ * `string U = "https://a.io";` loses its closing quote and semicolon and
+ * swallows the next declaration — silently dropping a variable instead of
+ * reporting a problem.
+ */
 function stripSolidityComments(text: string) {
-  return text.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/\/\/.*$/gm, " ");
+  let out = "";
+  let i = 0;
+  while (i < text.length) {
+    const char = text[i];
+    const next = text[i + 1];
+
+    if (char === '"' || char === "'") {
+      const quote = char;
+      out += char;
+      i += 1;
+      while (i < text.length) {
+        const inner = text[i];
+        if (inner === "\\") {
+          out += inner + (text[i + 1] ?? "");
+          i += 2;
+          continue;
+        }
+        out += inner;
+        i += 1;
+        if (inner === quote) break;
+      }
+      continue;
+    }
+
+    if (char === "/" && next === "/") {
+      while (i < text.length && text[i] !== "\n") i += 1;
+      continue;
+    }
+
+    if (char === "/" && next === "*") {
+      i += 2;
+      while (i < text.length && !(text[i] === "*" && text[i + 1] === "/")) i += 1;
+      i += 2;
+      continue;
+    }
+
+    out += char;
+    i += 1;
+  }
+  return out;
 }
 
 export function normalizeSolidityType(type: string) {
@@ -406,4 +800,3 @@ export function findStorageEntry(entries: StorageEntry[], target: string) {
   const found = entries.find((entry) => entry.name.replace(/^_+/, "").toLowerCase() === alias);
   return found ? { entry: found, reason: `getter alias match: ${normalized} -> ${found.name}` } : { entry: null, reason: "" };
 }
-
