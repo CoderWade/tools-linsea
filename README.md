@@ -12,16 +12,35 @@ Privacy-first Web3 and developer toolbox. Everything runs in the browser; chain 
 
 ### What this is
 
-A static, single-page workbench holding 15 tools across four sections:
+A static, single-page workbench holding 17 tools across four sections:
 
 | Section | Tools |
 |---|---|
-| Reverse Security (7) | Storage Slot Inspector, Source Layout Resolver, Proxy Slot Finder, Read Contract (eth_call), Calldata Decoder, Unit Converter, 4Byte / Selector Finder |
+| Reverse Security (9) | Storage Slot Inspector, Source Layout Resolver, Proxy Slot Finder, Read Contract (eth_call), Calldata Decoder, Event Log Decoder, ABI Encoder / Decoder, Unit Converter, 4Byte / Selector Finder |
 | Encoding & Crypto (4) | Encoder / Hash Suite, Symmetric Encryption, JWT Inspector, Base Converter |
 | Developer (3) | JSON Studio, Timestamp Pro, Text Compare |
 | General (1) | Market Clock |
 
 The app opens directly into a tool. There is no landing page, no sign-in, and no backend.
+
+### Signature lookup, and why it is opt-in
+
+Keccak-256 is one-way, so a 4-byte selector cannot be inverted — it can only be matched against a corpus. Two public, CORS-enabled services are queried (OpenChain and 4byte.directory), and only when the user presses the button:
+
+- **Nothing is sent while you type.** The request is one explicit click, and Privacy First Mode blocks it before any network call.
+- **Every candidate is re-hashed locally.** Corrupt and mistyped rows are flagged. This is a hygiene filter, not a security boundary: a 4-byte space holds only 2³² values, so mined decoys collide with real selectors by construction (OpenChain really does return `many_msg_babbage(bytes1)` and `_____$_$__$___$$$___$$___$__$$` for `0xa9059cbb`).
+- **Ambiguity is preserved.** All candidates are listed, none is auto-selected, machine-generated names rank last, and a note explains that any two candidates with the same type list decode to identical bytes.
+- **Remote text is untrusted.** Control characters, bidirectional overrides, and zero-width characters are stripped, length is capped, and results render as text only.
+
+### ABI codec
+
+The codec covers the full Contract ABI type system: integers, `bool`, `address`, `bytesN`, `bytes`, `string`, fixed and dynamic arrays, nested arrays, and tuples at any depth. Decoding is fail-closed — every read is bounds-checked, every static word is validated against its declared type (dirty high bits, `bool` outside {0,1}, address above 2¹⁶⁰), and a declared length that exceeds the payload throws instead of being silently clipped. A plausible-looking wrong answer is worse than an error in a tool that answers "what does this transaction do".
+
+Correctness is pinned by reference vectors generated with Foundry `cast` and committed to `src/lib/__tests__/vectors/`: 310 Keccak hashes (every length 0–300), 21 hand-picked ABI shapes, and a frozen 240-case differential corpus. `npm test` replays all of it, and CI runs the suite before every deploy.
+
+### Event log decoding
+
+`topics[0]` identifies the event; `indexed` parameters are read from `topics[1..]` and the rest from `data`. An indexed parameter with a dynamic type stores `keccak256(value)`, so the value cannot be recovered — the tool says so instead of printing a hash that looks like data.
 
 ### Design system
 
@@ -84,7 +103,7 @@ Lowest value in either theme: **4.59** (light `faint` on panel). Everything meet
 
 ### Internationalisation
 
-English and Chinese are complete peers, not a translated afterthought. All 367 user-facing strings live in `src/lib/i18n.ts` as `[English, 中文]` pairs, reached through `useT()` and `t(lang, key, vars)`.
+English and Chinese are complete peers, not a translated afterthought. All 462 user-facing strings live in `src/lib/i18n.ts` as `[English, 中文]` pairs, reached through `useT()` and `t(lang, key, vars)`.
 
 The translation policy is deliberate, and it is what keeps Chinese mode readable:
 
@@ -94,7 +113,7 @@ The translation policy is deliberate, and it is what keeps Chinese mode readable
 
 Search indexes both scripts so a query in either language finds the tool, but the displayed keyword list is filtered to the active language — seeing `json / format / 格式化` under a Chinese tool name reads as an unfinished translation.
 
-Audited across all 15 tools in both languages: zero CJK characters leak into English mode, zero English prose leaks into Chinese mode.
+Audited across all 17 tools in both languages: zero CJK characters leak into English mode, zero English prose leaks into Chinese mode.
 
 ### Layout
 
@@ -237,16 +256,35 @@ GitHub Pages via `.github/workflows/`, building on every push to `main`. Custom 
 
 ### 这是什么
 
-一个静态单页工作台，包含四个分区共 15 个工具：
+一个静态单页工作台，包含四个分区共 17 个工具：
 
 | 分区 | 工具 |
 |---|---|
-| 逆向安全（7） | 存储槽检查器、源码槽位解析器、代理槽探测器、合约调用读取、Calldata 解码器、单位转换器、4Byte / Selector 查询 |
+| 逆向安全（9） | 存储槽检查器、源码槽位解析器、代理槽探测器、合约调用读取、Calldata 解码器、事件日志解码器、ABI 编解码器、单位转换器、4Byte / Selector 查询 |
 | 编码与密码（4） | 编码与哈希套件、对称加密、JWT 检查器、进制转换器 |
 | 通用开发（3） | JSON 工作台、时间戳工具、文本对比 |
 | 通用工具（1） | 时间看盘 |
 
 打开即进入工具，没有落地页、没有登录、没有后端。
+
+### 签名反查，以及为什么必须手动触发
+
+Keccak-256 是单向函数，4 字节 selector 无法反推，只能与语料比对。工具会查询两个公开且支持 CORS 的服务（OpenChain 与 4byte.directory），且仅在你点击按钮时：
+
+- **打字过程中不发任何请求。** 一次明确点击才发一次请求；隐私优先模式在网络调用之前就阻断。
+- **每个候选都本地重算哈希。** 损坏或抄错的条目会被标记。但这只是卫生过滤，不是安全边界：4 字节空间只有 2³² 种取值，被挖出来的诱饵天然与真签名碰撞（`0xa9059cbb` 在 OpenChain 上确实会返回 `many_msg_babbage(bytes1)` 与 `_____$_$__$___$$$___$$___$__$$`）。
+- **保留歧义。** 全部候选都列出，绝不自动选中；机器生成的名字排在最后；并明确说明类型列表相同的候选在链上字节完全一致。
+- **远端文本视为不可信。** 剥离控制字符、双向覆盖符与零宽字符，限制长度，只以文本渲染。
+
+### ABI 编解码
+
+覆盖完整 Contract ABI 类型系统：整数、`bool`、`address`、`bytesN`、`bytes`、`string`、定长与动态数组、嵌套数组，以及任意深度的 tuple。解码是 fail-closed 的——每次读取都做边界检查，每个静态字都按声明类型校验（脏高位、`bool` 超出 {0,1}、address 超过 2¹⁶⁰），声明长度超出负载时直接报错而不是静默截断。在一个回答「这笔交易到底在做什么」的工具里，看似合理的错误答案比报错危险得多。
+
+正确性由 Foundry `cast` 生成的参考向量钉住，已提交到 `src/lib/__tests__/vectors/`：310 条 Keccak 哈希（覆盖 0–300 全部长度）、21 条手工挑选的 ABI 形状，以及一份冻结的 240 例差分语料。`npm test` 会全部重放，CI 在每次部署前都会先跑测试。
+
+### 事件日志解码
+
+`topics[0]` 标识事件；`indexed` 参数从 `topics[1..]` 读取，其余来自 `data`。动态类型的 indexed 参数存的是 `keccak256(value)`，原值无法还原——工具会直接说明这一点，而不是打印一个看起来像数据的哈希。
 
 ### 设计系统
 
@@ -309,7 +347,7 @@ GitHub Pages via `.github/workflows/`, building on every push to `main`. Custom 
 
 ### 国际化
 
-中文和英文是平等的两个语言，不是翻译附属品。367 条用户可见字符串全部位于 `src/lib/i18n.ts`，以 `[English, 中文]` 成对存放，通过 `useT()` 与 `t(lang, key, vars)` 取用。
+中文和英文是平等的两个语言，不是翻译附属品。462 条用户可见字符串全部位于 `src/lib/i18n.ts`，以 `[English, 中文]` 成对存放，通过 `useT()` 与 `t(lang, key, vars)` 取用。
 
 翻译策略是刻意划定的，也是中文模式可读的原因：
 
@@ -319,7 +357,7 @@ GitHub Pages via `.github/workflows/`, building on every push to `main`. Custom 
 
 搜索同时索引中英两种文字，任何一种语言输入都能找到工具；但展示的关键词列表会按当前语言过滤——中文工具名下出现 `json / format / 格式化`，看起来就是没翻译完。
 
-对 15 个工具在两种语言下做了全量扫描：英文模式零个中文字符，中文模式零处英文散文。
+对 17 个工具在两种语言下做了全量扫描：英文模式零个中文字符，中文模式零处英文散文。
 
 ### 布局
 

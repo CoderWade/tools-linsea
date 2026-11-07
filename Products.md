@@ -27,18 +27,18 @@
 ### 3. 产品原则
 
 1. **工具即页面**：首屏直接是工作台，没有 hero、没有宣传区。
-2. **本地优先**：能在浏览器算的绝不上传。全部 15 个工具中，只有存储槽检查器、代理槽探测器与合约调用读取会发出网络请求。
+2. **本地优先**：能在浏览器算的绝不上传。在 17 个工具中，只有存储槽检查器、代理槽探测器、合约调用读取，以及用户主动点击时的签名反查会发出网络请求；签名反查在隐私优先模式下直接阻断。
 3. **只读**：不签名、不发交易、不接受私钥。整个应用没有任何写链能力。
 4. **结论可复查**：每次链上读取都固定输出 chainId、端点主机与确切区块号，任何结果都能事后复现。
 5. **一个颜色一个含义**：配色系统的硬约束，详见第 6 节。
 
 ### 4. 信息架构
 
-四个分区，共 15 个工具：
+四个分区，共 17 个工具：
 
 | 分区 | 工具数 | 工具 |
 |---|---|---|
-| 逆向安全 Reverse Security | 7 | 存储槽检查器、源码槽位解析器、代理槽探测器、合约调用读取、Calldata 解码器、单位转换器、4Byte / Selector 查询 |
+| 逆向安全 Reverse Security | 9 | 存储槽检查器、源码槽位解析器、代理槽探测器、合约调用读取、Calldata 解码器、事件日志解码器、ABI 编解码器、单位转换器、4Byte / Selector 查询 |
 | 编码与密码 Encoding & Crypto | 4 | 编码与哈希套件、对称加密、JWT 检查器、进制转换器 |
 | 通用开发 Developer | 3 | JSON 工作台、时间戳工具、文本对比 |
 | 通用工具 General Tools | 1 | 时间看盘 |
@@ -99,21 +99,42 @@
 
 #### 5.5 Calldata 解码器
 
-拆分 selector 与后续 ABI 参数，按 32 字节对齐展示每个参数及其序号。纯本地，不查 4byte 数据库。
+拆出 selector 后，把参数按声明类型解码成带类型的值，同时保留 32 字节原始字视图。
 
-#### 5.6 单位转换器
+类型有两种来源，都不强制联网：手动粘贴签名（纯本地），或点击「反查签名」从 OpenChain / 4byte.directory 取候选。反查的约束：
+
+- 只在点击时发一次请求，打字过程中零请求；隐私优先模式下在发请求之前就报错阻断。
+- 每个候选都本地重算 keccak 并标记是否一致。这只是卫生过滤——4 字节 selector 只有 2³² 种取值，被挖出来的诱饵天然与真签名碰撞，工具不假装能凭哈希区分真假。
+- 全部候选都展示，绝不自动选中；机器生成的名字（长数字串、`$`、首尾下划线）排在后面，并说明类型列表相同的候选在链上字节完全一致。
+- 远端文本按不可信处理：剥离控制字符与双向覆盖符，截断长度，只以文本渲染。
+
+#### 5.6 事件日志解码器
+
+粘贴单条 log 的 topics 与 data：`topics[0]` 反查事件签名，`indexed` 参数从 `topics[1..]` 解码，其余从 `data` 解码。
+
+**动态类型的 indexed 参数只存 `keccak256(value)`**，原值不可还原。UI 会明确标注这一点并展示该哈希，而不是把它当作解码结果。
+
+#### 5.7 ABI 编解码器
+
+四种模式：编码调用、解码 calldata、编码构造函数参数、用完整 ABI JSON 解码。
+
+类型系统覆盖完整 Contract ABI：整数、`bool`、`address`、`bytesN`、`bytes`、`string`、定长与动态数组、嵌套数组、任意深度 tuple。ABI JSON 模式保留 struct 字段名，并按 calldata 里的 selector 自动匹配函数。
+
+解码是 fail-closed 的：边界检查、脏高位校验、声明长度越界即报错。编码与解码的正确性由 Foundry `cast` 生成的 310 条 Keccak 向量、21 条 ABI 形状向量与 240 例冻结差分语料共同锁定。
+
+#### 5.8 单位转换器
 
 在 `wei` / `gwei` / `ether` / 自定义代币精度之间双向换算，基于 `BigInt`，不使用浮点数。小数位数超出精度时直接报错。
 
-#### 5.7 4Byte / Selector 查询
+#### 5.9 4Byte / Selector 查询
 
-本地计算 `keccak256`，输出函数 selector（前 4 字节）与事件 topic0（完整 32 字节）。不发网络请求。
+正向：本地按**规范化形式**计算 `keccak256`，输出函数 selector（前 4 字节）与事件 topic0（完整 32 字节）。空格、参数名、`indexed` 都不会影响结果。不发网络请求。
 
-#### 5.8 编码与哈希套件
+#### 5.10 编码与哈希套件
 
 七种模式：Keccak256、SHA-256、SHA-1、Base64 编码/解码、URL 编码/解码。全部本地执行（SHA 系列走 `crypto.subtle`）。
 
-#### 5.9 对称加密
+#### 5.11 对称加密
 
 AES-GCM 加解密试验台：
 
@@ -122,30 +143,30 @@ AES-GCM 加解密试验台：
 - 输出自描述 JSON 密文包（`v`、`alg`、`kdf`、`iterations`、`iv`、`salt`、`data`），可直接粘贴回来解密。
 - 密钥不落盘、不出浏览器。
 
-#### 5.10 JWT 检查器
+#### 5.12 JWT 检查器
 
 本地 Base64URL 解码 header 与 payload，输出算法、过期时间与状态（已过期 / 有效或未知）。**不验证签名**——这一点在 UI 上应被理解为「解码」而非「校验」。
 
-#### 5.11 JSON 工作台
+#### 5.13 JSON 工作台
 
 格式化、压缩、校验 JSON，并可推断 TypeScript 类型骨架。
 
-#### 5.12 时间戳工具
+#### 5.14 时间戳工具
 
 - **单条解析**：时间戳（秒 / 毫秒 / 微秒 / 纳秒，或自动识别）与日期字符串互转，支持任意 IANA 时区。
 - **批量转换**：逐行粘贴，输出表格并可复制为 CSV。
 - 附带实时 Unix 时钟、单位切换、暂停、`±1h` / `±1d` 快捷调整。
 - 输出包含 ISO 8601、SQL UTC、当地时区、年内第几天、ISO 周。
 
-#### 5.13 进制转换器
+#### 5.15 进制转换器
 
 2–36 进制任意互转，基于 `BigInt`。支持 `0x` / `0b` / `0o` 前缀（且必须与输入进制匹配）、大写输出、二进制与十六进制分组显示。
 
-#### 5.14 文本对比
+#### 5.16 文本对比
 
 逐行 LCS 差异比对，输出 `+` 新增 / `-` 删除 / 空格 未变的行级结果。纯本地。
 
-#### 5.15 时间看盘
+#### 5.17 时间看盘
 
 - 北京 / 香港 / 纽约三地实时时钟。
 - 美股、A 股、港股三个市场的交易状态、开盘/收盘倒计时、时段条。
@@ -204,7 +225,7 @@ AES-GCM 加解密试验台：
 
 **已实现，且中英对等。**
 
-- 367 条用户可见字符串，全部位于 `src/lib/i18n.ts`，`[English, 中文]` 成对存放。
+- 462 条用户可见字符串，全部位于 `src/lib/i18n.ts`，`[English, 中文]` 成对存放。
 - 通过 `LanguageContext` + `useT()` 取用；需要语言参数的纯函数用 `t(lang, key, vars)`。
 - 支持占位符插值（如 `{count}`、`{time}`）。
 
@@ -222,7 +243,7 @@ AES-GCM 加解密试验台：
 - 日期时间使用 `Intl.DateTimeFormat`，支持任意 IANA 时区与夏令时。
 - 星期、市场状态、盘前盘后、夏令时名称全部双语。
 
-**已审计**：15 个工具 × 2 语言全量扫描，英文模式零 CJK 泄漏，中文模式零英文散文泄漏。
+**已审计**：17 个工具 × 2 语言全量扫描，英文模式零 CJK 泄漏，中文模式零英文散文泄漏。
 
 **主题与语言的持久化**：存于 `localStorage` 的 `linsea-react-state`。主题在首帧前由内联脚本解析，深色用户不会闪白。
 
@@ -325,18 +346,18 @@ In one line: compress high-frequency micro-tasks — read a storage slot, decode
 ### 3. Principles
 
 1. **A tool is the page.** The first screen is the workbench. No hero, no marketing section.
-2. **Local first.** Anything the browser can compute, the browser computes. Of the 15 tools, only Storage Slot Inspector, Proxy Slot Finder, and Read Contract make network requests.
+2. **Local first.** Anything the browser can compute, the browser computes. Of the 17 tools, only Storage Slot Inspector, Proxy Slot Finder, Read Contract, and an explicitly triggered signature lookup make network requests; Privacy First Mode blocks the lookup outright.
 3. **Read-only.** No signing, no transactions, no private keys. The app has no write path to any chain.
 4. **Results are re-checkable.** Every chain read reports chainId, endpoint host, and the exact block number, so any output can be reproduced later.
 5. **One colour, one meaning.** A hard constraint on the palette; see section 6.
 
 ### 4. Information architecture
 
-Four sections, 15 tools:
+Four sections, 17 tools:
 
 | Section | Count | Tools |
 |---|---|---|
-| Reverse Security | 7 | Storage Slot Inspector, Source Layout Resolver, Proxy Slot Finder, Read Contract (eth_call), Calldata Decoder, Unit Converter, 4Byte / Selector Finder |
+| Reverse Security | 9 | Storage Slot Inspector, Source Layout Resolver, Proxy Slot Finder, Read Contract (eth_call), Calldata Decoder, Event Log Decoder, ABI Encoder / Decoder, Unit Converter, 4Byte / Selector Finder |
 | Encoding & Crypto | 4 | Encoder / Hash Suite, Symmetric Encryption, JWT Inspector, Base Converter |
 | Developer | 3 | JSON Studio, Timestamp Pro, Text Compare |
 | General Tools | 1 | Market Clock |
@@ -397,21 +418,42 @@ Behaviour details:
 
 #### 5.5 Calldata Decoder
 
-Splits the selector from the following ABI arguments and lists each 32-byte word with its index. Purely local; no 4byte database lookup.
+Splits the selector off and decodes the arguments into typed values, keeping the raw 32-byte word view alongside.
 
-#### 5.6 Unit Converter
+Types come from one of two places, neither forced to the network: a pasted signature (entirely local), or the "look up signature" button, which queries OpenChain and 4byte.directory. That lookup is constrained on purpose:
+
+- One request per explicit click; nothing is sent while typing, and Privacy First Mode refuses before any request is made.
+- Every candidate is re-hashed locally and flagged when it disagrees. This is hygiene, not a security boundary — a 4-byte selector has only 2³² values, so mined decoys collide with real ones by construction.
+- Every candidate is shown and none is auto-selected. Machine-generated names (long digit runs, `$`, leading/trailing underscores) sort last, and a note states that candidates with the same type list are byte-identical on the wire.
+- Remote text is untrusted: control characters and bidirectional overrides are stripped, length is capped, and results render as text only.
+
+#### 5.6 Event Log Decoder
+
+Paste one log's topics and data: `topics[0]` resolves the event, `indexed` parameters decode from `topics[1..]`, and the rest decode from `data`.
+
+**An indexed parameter with a dynamic type stores only `keccak256(value)`** — the value cannot be recovered. The UI says so and shows the hash, instead of presenting it as a decoded value.
+
+#### 5.7 ABI Encoder / Decoder
+
+Four modes: encode a call, decode calldata, encode constructor arguments, decode against a full ABI JSON.
+
+The type system is the complete Contract ABI: integers, `bool`, `address`, `bytesN`, `bytes`, `string`, fixed and dynamic arrays, nested arrays, and tuples at any depth. ABI JSON mode keeps struct field names and matches the function by the selector in the calldata.
+
+Decoding is fail-closed: bounds checks, dirty-high-bit validation, and a hard error when a declared length exceeds the payload. Correctness is pinned by 310 Keccak vectors, 21 hand-picked ABI shapes, and a frozen 240-case differential corpus generated with Foundry `cast`.
+
+#### 5.8 Unit Converter
 
 Bidirectional conversion between `wei` / `gwei` / `ether` / custom token precision, using `BigInt` throughout — no floats. Excess decimal places fail loudly.
 
-#### 5.7 4Byte / Selector Finder
+#### 5.9 4Byte / Selector Finder
 
 Computes `keccak256` locally and returns the function selector (first 4 bytes) and event topic0 (full 32 bytes). No network request.
 
-#### 5.8 Encoder / Hash Suite
+#### 5.10 Encoder / Hash Suite
 
 Seven modes: Keccak256, SHA-256, SHA-1, Base64 encode/decode, URL encode/decode. All local; the SHA family uses `crypto.subtle`.
 
-#### 5.9 Symmetric Encryption
+#### 5.11 Symmetric Encryption
 
 An AES-GCM playground:
 
@@ -420,30 +462,30 @@ An AES-GCM playground:
 - Outputs a self-describing JSON bundle (`v`, `alg`, `kdf`, `iterations`, `iv`, `salt`, `data`) that can be pasted straight back for decryption.
 - Keys are never persisted and never leave the browser.
 
-#### 5.10 JWT Inspector
+#### 5.12 JWT Inspector
 
 Decodes the header and payload with Base64URL locally and reports algorithm, expiry, and status (expired / active or unknown). **The signature is not verified** — this is decoding, not validation, and the UI should be read that way.
 
-#### 5.11 JSON Studio
+#### 5.13 JSON Studio
 
 Format, minify, validate, and infer a TypeScript shape skeleton from JSON.
 
-#### 5.12 Timestamp Pro
+#### 5.14 Timestamp Pro
 
 - **Single parse** — convert between timestamps (seconds, milliseconds, microseconds, nanoseconds, or auto-detected) and date strings across any IANA timezone.
 - **Batch convert** — paste line by line, get a table you can copy out as CSV.
 - Ships with a live Unix clock, unit switching, pause, and `±1h` / `±1d` quick adjustments.
 - Output includes ISO 8601, SQL UTC, the selected zone, day of year, and ISO week.
 
-#### 5.13 Base Converter
+#### 5.15 Base Converter
 
 Any radix from 2 to 36, `BigInt` based. Accepts `0x` / `0b` / `0o` prefixes (which must match the input radix), uppercase output, and grouped binary/hex display.
 
-#### 5.14 Text Compare
+#### 5.16 Text Compare
 
 Line-level LCS diff with `+` added, `-` removed, and unchanged lines. Purely local.
 
-#### 5.15 Market Clock
+#### 5.17 Market Clock
 
 - Live clocks for Beijing, Hong Kong, and New York.
 - Trading state, open/close countdown, and session bars for US, A-share, and HK markets.
@@ -502,7 +544,7 @@ Four token families, each with exactly one job.
 
 **Implemented, and the two languages are peers.**
 
-- 367 user-facing strings live in `src/lib/i18n.ts` as `[English, 中文]` pairs.
+- 462 user-facing strings live in `src/lib/i18n.ts` as `[English, 中文]` pairs.
 - Reached through `LanguageContext` + `useT()`; pure helpers that need a language take `t(lang, key, vars)`.
 - Placeholder interpolation is supported (`{count}`, `{time}`).
 
@@ -520,7 +562,7 @@ Four token families, each with exactly one job.
 - Date and time via `Intl.DateTimeFormat`, any IANA zone, DST handled.
 - Weekday names, market state, pre/post-market labels, and DST naming are all bilingual.
 
-**Audited**: all 15 tools in both languages. Zero CJK characters in English mode, zero English prose in Chinese mode.
+**Audited**: all 17 tools in both languages. Zero CJK characters in English mode, zero English prose in Chinese mode.
 
 **Persistence**: theme and language live in `localStorage` under `linsea-react-state`. The theme is resolved before first paint by an inline script, so dark-mode users never see a white flash.
 

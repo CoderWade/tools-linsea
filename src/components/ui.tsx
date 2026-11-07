@@ -378,8 +378,10 @@ export function EmptyState({ title, hint, icon }: { title: string; hint?: string
 export function ResultRows({ rows }: { rows: Array<[string, ReactNode, string?]> }) {
   return (
     <div className="grid">
-      {rows.map(([label, value, copyValue]) => (
-        <div key={label} className="grid min-h-11 grid-cols-[132px_minmax(0,1fr)_auto] items-center gap-3 border-b border-line py-2 last:border-b-0 max-sm:grid-cols-[1fr_auto]">
+      {rows.map(([label, value, copyValue], index) => (
+        // Keyed by position, not by label: two call sites legitimately render
+        // the same label twice and duplicate keys make React drop rows.
+        <div key={`${index}-${label}`} className="grid min-h-11 grid-cols-[132px_minmax(0,1fr)_auto] items-center gap-3 border-b border-line py-2 last:border-b-0 max-sm:grid-cols-[1fr_auto]">
           <div className="text-xs font-semibold text-faint max-sm:col-span-2">{label}</div>
           <div className="min-w-0 break-words font-mono text-sm leading-6 text-text">{value}</div>
           <CopyButton value={copyValue ?? stringifyNode(value)} />

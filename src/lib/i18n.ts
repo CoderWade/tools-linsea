@@ -212,6 +212,10 @@ export const strings = {
 
   // Selector finder
   "selector.panel": ["Signature", "函数签名"],
+  "selector.canonicalNote": [
+    "The selector is always computed over the canonical form, so spacing, parameter names, and indexed never change it.",
+    "selector 始终按规范化后的形式计算，因此空格、参数名与 indexed 都不会影响结果。",
+  ],
   "field.signature": ["Function or event signature", "函数或事件签名"],
   "row.signature": ["Signature", "签名"],
   "row.functionSelector": ["Function selector", "函数 selector"],
@@ -510,7 +514,133 @@ export const strings = {
   "common.none": ["none", "无"],
   "common.notApplicable": ["n/a", "不适用"],
   "common.loading": ["Loading…", "加载中…"],
+  "common.reload": ["Reload", "重新加载"],
   "common.errorPrefix": ["Error: {message}", "错误：{message}"],
+
+  // Signature database (selector -> text)
+  "sig.lookup": ["Look up signature", "反查签名"],
+  "sig.lookingUp": ["Looking up…", "查询中…"],
+  "sig.panel": ["Signature lookup", "签名反查"],
+  "sig.notice": [
+    "Keccak is one-way, so a selector can only be matched against a public corpus. Lookup runs only when you press the button, and it reveals this selector to OpenChain and 4byte.directory.",
+    "Keccak 是单向函数，selector 只能与公开语料比对。只有点击按钮才会发起查询，查询会把该 selector 发送给 OpenChain 与 4byte.directory。",
+  ],
+  "sig.privacy": [
+    "Privacy First Mode blocks remote lookups. Turn it off in Settings to query the signature databases.",
+    "隐私优先模式已阻断远程查询。请在设置中关闭后使用签名数据库。",
+  ],
+  "sig.empty": ["No candidates found in either database.", "两个数据库都没有找到候选。"],
+  "sig.ambiguous": [
+    "{count} candidates share this selector. Any of them is byte-identical on the wire — pick the one that matches the contract you are inspecting.",
+    "{count} 个候选共用这个 selector。它们在链上字节完全相同，请选择与所查合约相符的那个。",
+  ],
+  "sig.single": ["One candidate found.", "找到 1 个候选。"],
+  "sig.sources": ["Sources", "来源"],
+  "sig.source.cache": ["cache", "缓存"],
+  "sig.verified": ["re-hash matches", "本地重算一致"],
+  "sig.unverified": ["re-hash mismatch", "本地重算不一致"],
+  "sig.verifiedContract": ["verified contract", "已验证合约"],
+  "sig.useThis": ["Use this signature", "使用该签名"],
+  "sig.selected": ["Selected", "已选中"],
+  "sig.collisionWarning": [
+    "A 4-byte selector has only 2^32 values, so unrelated functions collide by design. Local re-hashing proves a string produces this selector; it cannot prove the contract actually declares it.",
+    "4 字节 selector 只有 2^32 种取值，不同函数天然会碰撞。本地重算只能证明该字符串会产生此 selector，无法证明合约真的声明了它。",
+  ],
+  "sig.err.unparseable": ["not valid ABI", "不是合法 ABI"],
+  "sig.partial": ["Some sources failed: {errors}", "部分来源失败：{errors}"],
+  "sig.manual": ["Or type inputs manually", "或手动填写参数类型"],
+  "sig.rawWords": ["Raw 32-byte words", "原始 32 字节字"],
+  "sig.lookupHint": [
+    "Decoding needs types. Look the selector up, or paste a signature from the contract source.",
+    "解码需要类型信息。可反查 selector，或粘贴合约源码里的签名。",
+  ],
+
+  // ABI encoder / decoder
+  "abiPanel.title": ["ABI Encoder / Decoder", "ABI 编解码器"],
+  "abiPanel.mode.encode": ["Encode call", "编码调用"],
+  "abiPanel.mode.decode": ["Decode calldata", "解码 calldata"],
+  "abiPanel.mode.constructor": ["Constructor args", "构造函数参数"],
+  "abiPanel.mode.abi": ["Decode with ABI JSON", "用 ABI JSON 解码"],
+  "abiPanel.notice": [
+    "Encoding is local and deterministic. Signature mode accepts a readable signature; ABI mode takes a contract ABI JSON so tuples and structs keep their names.",
+    "编码在本地完成且结果确定。签名模式接受可读签名；ABI 模式接受合约 ABI JSON，可保留 tuple 与 struct 的字段名。",
+  ],
+  "abiPanel.abiNotice": [
+    "Paste the ABI array from a verified contract. Nothing is fetched, so this works with Privacy First Mode on.",
+    "粘贴已验证合约的 ABI 数组。全部本地处理，因此隐私优先模式下同样可用。",
+  ],
+  "field.abiJson": ["Contract ABI JSON", "合约 ABI JSON"],
+  "field.abiFunction": ["Function", "函数"],
+  "field.calldataInput": ["Calldata", "Calldata"],
+  "field.returndataInput": ["Return data (optional)", "返回数据（可选）"],
+  "abiPanel.empty.title": ["Nothing encoded yet", "尚未编码"],
+  "abiPanel.empty.hint": [
+    "Enter a signature and its arguments to get calldata you can paste into a transaction.",
+    "输入签名与参数，得到可直接粘贴进交易的 calldata。",
+  ],
+  "abiPanel.action.encode": ["Encode", "编码"],
+  "abiPanel.action.decode": ["Decode", "解码"],
+  "abiPanel.selector": ["Function selector", "函数 selector"],
+  "abiPanel.calldata": ["Calldata", "Calldata"],
+  "abiPanel.constructorData": ["Constructor arguments", "构造函数参数"],
+  "abiPanel.err.abiJson": ["Paste a valid ABI JSON array.", "请粘贴合法的 ABI JSON 数组。"],
+  "abiPanel.err.noFunctions": ["This ABI has no functions with matching types.", "该 ABI 中没有参数匹配的函数。"],
+  "abiPanel.err.pickFunction": ["Choose a function first.", "请先选择函数。"],
+  "abiPanel.err.selectorMismatch": [
+    "Calldata starts with selector 0x{provided}, but {signature} hashes to 0x{expected}.",
+    "calldata 开头的 selector 是 0x{provided}，但 {signature} 实际对应 0x{expected}。",
+  ],
+  "abiPanel.argsTitle": ["Arguments", "参数"],
+  "abiPanel.argsHint": [
+    "One argument per line. Arrays and tuples accept JSON, e.g. [1,2] or [1,\"0x…\"].",
+    "每行一个参数。数组与 tuple 可用 JSON，例如 [1,2] 或 [1,\"0x…\"]。",
+  ],
+  "abiPanel.decodedName": ["Name", "名称"],
+  "abiPanel.decodedValue": ["Value", "值"],
+  "abiPanel.matchedFunction": ["Matched by selector", "按 selector 匹配"],
+  "abiPanel.noMatch": ["No function in this ABI has selector 0x{selector}.", "该 ABI 中没有 selector 为 0x{selector} 的函数。"],
+  "abiPanel.selectFunction": ["Select a function", "选择函数"],
+  "abiPanel.constructorHeading": ["Constructor", "构造函数"],
+  "abiPanel.constructorNote": [
+    "Constructor arguments are appended to the deployment bytecode with no selector. Verify them against the creation transaction input.",
+    "构造函数参数不带 selector，直接拼在部署字节码之后。可对照创建交易的 input 校验。",
+  ],
+
+  // Event log decoder
+  "event.panel": ["Event log", "事件日志"],
+  "event.notice": [
+    "Paste a receipt log. topics[0] identifies the event, indexed parameters are read from topics[1..], and the rest come from data.",
+    "粘贴 receipt 中的 log。topics[0] 标识事件，indexed 参数从 topics[1..] 读取，其余来自 data。",
+  ],
+  "field.topics": ["Topics (one per line)", "Topics（每行一个）"],
+  "field.logData": ["Log data", "Log data"],
+  "event.action.decode": ["Decode log", "解码日志"],
+  "event.empty.title": ["No log decoded", "尚未解码"],
+  "event.empty.hint": [
+    "Paste the topics and data of one log entry, then decode it against a signature or ABI.",
+    "粘贴单条 log 的 topics 与 data，再用签名或 ABI 解码。",
+  ],
+  "event.indexed": ["indexed", "indexed"],
+  "event.fromTopic": ["from topics[{index}]", "来自 topics[{index}]"],
+  "event.fromData": ["from data", "来自 data"],
+  "event.dynamicIndexedWarning": [
+    "This indexed parameter has a dynamic type, so the topic holds keccak256(value), not the value. It cannot be reversed — only compared against a candidate value.",
+    "该 indexed 参数是动态类型，topic 中存的是 keccak256(value) 而不是原值，无法还原，只能与候选值比对。",
+  ],
+  "event.topicHash": ["Topic hash", "Topic 哈希"],
+  "event.topic0Missing": ["First topic must be a 32-byte event topic.", "第一个 topic 必须是 32 字节的事件 topic。"],
+  "event.anonymous": ["Anonymous event: no topic0, so it must be matched by ABI.", "匿名事件没有 topic0，只能通过 ABI 匹配。"],
+  "event.err.topics": ["Enter at least one topic (64 hex characters each).", "请至少输入一个 topic（每个 64 位十六进制字符）。"],
+  "event.err.count": ["Signature expects {expected} topic(s) but {actual} were supplied.", "签名需要 {expected} 个 topic，实际提供了 {actual} 个。"],
+  "event.topicCount": ["Indexed parameters", "indexed 参数个数"],
+  "event.dataWords": ["Data words", "data 字数"],
+  "event.err.notIndexed": ["Parameter {name} is not indexed; its value must come from data.", "参数 {name} 不是 indexed，其值应来自 data。"],
+
+  // Shared: signature source
+  "sigSource.title": ["How to get the types", "如何获得类型"],
+  "sigSource.lookup": ["Look up", "反查"],
+  "sigSource.manual": ["Manual", "手动"],
+  "sigSource.abi": ["ABI", "ABI"],
 } satisfies Record<string, readonly [string, string]>;
 
 export type StringKey = keyof typeof strings;

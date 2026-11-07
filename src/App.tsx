@@ -1,4 +1,5 @@
 import {
+  Boxes,
   Braces,
   Calculator,
   Clock3,
@@ -13,6 +14,7 @@ import {
   LockKeyhole,
   Moon,
   Binary,
+  Radio,
   Route,
   Search,
   Settings2,
@@ -23,7 +25,26 @@ import {
 import { ReactNode, useEffect, useMemo, useState } from "react";
 import { Button, Combobox, CommandInput, CopyButton, EmptyState, Field, IconButton, Input, Modal, Notice, Panel, ResultRows, Select, Tabs, Textarea, cn } from "./components/ui";
 import { LanguageContext, useLang, useT, type Lang, type StringKey, t } from "./lib/i18n";
-import { decodeValues, encodeCall, formatAbiType, looksLikeArchiveGap, parseSignature, splitArgs } from "./lib/abi";
+import {
+  decodeParameters,
+  decodeSingle,
+  encodeCall,
+  encodeParameters,
+  formatAbiParameter,
+  formatAbiType,
+  isDynamic,
+  looksLikeArchiveGap,
+  parseAbiJson,
+  parseAbiType,
+  parseSignature,
+  splitArgumentInput,
+  staticByteSize,
+  type AbiItem,
+  type AbiParameter,
+  type AbiSignature,
+  type DecodedParameter,
+} from "./lib/abi";
+import { candidateTypeList, lookupSignature, type SignatureCandidate, type SignatureKind } from "./lib/signatures";
 import {
   decodeStorageValue,
   findStorageEntry,
@@ -44,6 +65,8 @@ type ToolId =
   | "proxy-slot"
   | "eth-call"
   | "calldata-decoder"
+  | "event-decoder"
+  | "abi-codec"
   | "unit-converter"
   | "selector-finder"
   | "hash-suite"
@@ -120,7 +143,9 @@ const tools: Tool[] = [
   { id: "source-layout", category: "reverse", name: "Source Layout Resolver", zh: "源码槽位解析器", description: { en: "Paste verified or decompiled Solidity source to resolve names into storage slots.", zh: "粘贴已验证或反编译的 Solidity 源码，将变量名解析为存储槽位。" }, keywords: ["source", "layout", "decompiled", "verified", "slot", "源码", "槽位"], badges: { en: ["Local first", "Layout aware"], zh: ["本地优先", "布局感知"] }, icon: <FileCode2 /> },
   { id: "proxy-slot", category: "reverse", name: "Proxy Slot Finder", zh: "代理槽探测器", description: { en: "Probe ERC-1967 implementation/admin/beacon slots.", zh: "探测 ERC-1967 的 implementation、admin 与 beacon 槽位。" }, keywords: ["proxy", "erc1967", "beacon", "implementation", "代理", "实现地址"], badges: { en: ["Read only", "RPC"], zh: ["只读", "RPC"] }, icon: <Route /> },
   { id: "eth-call", category: "reverse", name: "Read Contract (eth_call)", zh: "合约调用读取", description: { en: "Call any view function by signature and read the decoded result, with optional multi-block comparison.", zh: "按函数签名调用任意 view 函数并解码返回值，可选多区块对比。" }, keywords: ["eth_call", "call", "contract", "view", "abi", "getter", "调用", "读取", "合约", "合约调用"], badges: { en: ["eth_call", "Multi-block"], zh: ["eth_call", "多区块"] }, icon: <Terminal /> },
-  { id: "calldata-decoder", category: "reverse", name: "Calldata Decoder", zh: "Calldata 解码器", description: { en: "Split selector and ABI words, then inspect calldata structure.", zh: "拆分 selector 与 ABI 参数，查看 calldata 结构。" }, keywords: ["calldata", "selector", "abi"], badges: { en: ["Local", "ABI words"], zh: ["本地", "ABI 参数"] }, icon: <Code2 /> },
+  { id: "calldata-decoder", category: "reverse", name: "Calldata Decoder", zh: "Calldata 解码器", description: { en: "Resolve the selector against public signature databases, then decode every argument into typed values.", zh: "用公开签名数据库反查 selector，再把每个参数解码为带类型的值。" }, keywords: ["calldata", "selector", "abi", "4byte", "signature", "解码", "签名"], badges: { en: ["Signature lookup", "Typed decode"], zh: ["签名反查", "类型解码"] }, icon: <Code2 /> },
+  { id: "event-decoder", category: "reverse", name: "Event Log Decoder", zh: "事件日志解码器", description: { en: "Decode receipt logs: topic0 to signature, indexed topics, and the data payload.", zh: "解码 receipt 日志：topic0 反查签名、indexed topics 与 data 负载。" }, keywords: ["event", "log", "topic0", "receipt", "indexed", "事件", "日志"], badges: { en: ["topics", "indexed"], zh: ["topics", "indexed"] }, icon: <Radio /> },
+  { id: "abi-codec", category: "reverse", name: "ABI Encoder / Decoder", zh: "ABI 编解码器", description: { en: "Encode calls and constructor arguments, or decode calldata and return data against a signature or full ABI.", zh: "编码调用与构造函数参数，或按签名 / 完整 ABI 解码 calldata 与返回数据。" }, keywords: ["abi", "encode", "decode", "calldata", "constructor", "tuple", "编码", "解码"], badges: { en: ["Full type system", "Local"], zh: ["完整类型系统", "本地"] }, icon: <Boxes /> },
   { id: "unit-converter", category: "reverse", name: "Unit Converter", zh: "单位转换器", description: { en: "Convert Wei, Gwei, Ether, and token decimals safely.", zh: "在 wei、gwei、ether 与代币精度之间安全换算。" }, keywords: ["wei", "gwei", "ether", "decimals", "单位", "精度"], badges: { en: ["BigInt", "Bidirectional"], zh: ["BigInt", "双向换算"] }, icon: <Calculator /> },
   { id: "selector-finder", category: "reverse", name: "4Byte / Selector Finder", zh: "4Byte / Selector 查询", description: { en: "Generate selectors and event topic0 locally.", zh: "本地生成函数 selector 与事件 topic0。" }, keywords: ["4byte", "selector", "topic0", "function", "函数", "事件"], badges: { en: ["Keccak", "Local"], zh: ["Keccak", "本地"] }, icon: <Fingerprint /> },
   { id: "hash-suite", category: "crypto", name: "Encoder / Hash Suite", zh: "编码与哈希套件", description: { en: "Hash, Base64, URL encode/decode, and Keccak utilities.", zh: "哈希、Base64、URL 编解码与 Keccak 工具。" }, keywords: ["hash", "sha256", "base64", "url", "哈希", "编码"], badges: { en: ["Crypto", "Local"], zh: ["哈希", "本地"] }, icon: <KeyRound /> },
@@ -154,6 +179,9 @@ export function App() {
 
   useEffect(() => {
     document.documentElement.classList.toggle("dark", theme === "dark");
+    // Keep the document language in sync: it drives screen-reader pronunciation
+    // and lets the error boundary render in the language the user chose.
+    document.documentElement.lang = language === "zh" ? "zh-CN" : "en";
     localStorage.setItem(STATE_KEY, JSON.stringify({ category: activeCategory, tool: activeToolId, theme, language, settings, recent }));
     localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
   }, [activeCategory, activeToolId, theme, language, settings, recent]);
@@ -360,7 +388,9 @@ function ToolWorkbench({ tool, settings }: { tool: Tool; settings: Settings }) {
     case "source-layout": return <SourceLayoutResolver />;
     case "proxy-slot": return <ProxySlotFinder settings={settings} />;
     case "eth-call": return <EthCallInspector settings={settings} />;
-    case "calldata-decoder": return <CalldataDecoder />;
+    case "calldata-decoder": return <CalldataDecoder settings={settings} />;
+    case "event-decoder": return <EventLogDecoder settings={settings} />;
+    case "abi-codec": return <AbiCodec />;
     case "unit-converter": return <UnitConverter />;
     case "selector-finder": return <SelectorFinder />;
     case "hash-suite": return <HashSuite />;
@@ -407,7 +437,7 @@ function StorageSlotInspector({ settings }: { settings: Settings }) {
       const session = await openRpcSession(settings, blockTag);
       if (mode === "raw") {
         const slot = toSlotHex(slotIndex);
-        const raw = await rpcRequest(session.endpoint, "eth_getStorageAt", [contract, slot, session.blockTag]);
+        const raw = requireHexWord(await rpcRequest(session.endpoint, "eth_getStorageAt", [contract, slot, session.blockTag]));
         setOutput(<RawStorageOutput contract={contract} session={session} slotIndex={slotIndex} slot={slot} raw={raw} decodeType={decodeType} />);
         return;
       }
@@ -416,7 +446,7 @@ function StorageSlotInspector({ settings }: { settings: Settings }) {
       if (!layout) throw new Error(tr("storage.err.declaration"));
       if (baseSlot) {
         const valueSlot = mappingSlotByType(mappingKey, layout.keyType, toSlotHex(baseSlot));
-        const raw = await rpcRequest(session.endpoint, "eth_getStorageAt", [contract, valueSlot, session.blockTag]);
+        const raw = requireHexWord(await rpcRequest(session.endpoint, "eth_getStorageAt", [contract, valueSlot, session.blockTag]));
         setOutput(<MappingReadOutput baseSlot={baseSlot} valueSlot={valueSlot} raw={raw} valueType={layout.valueType} session={session} />);
         return;
       }
@@ -709,17 +739,574 @@ function UnitConverter() {
 function SelectorFinder() {
   const [input, setInput] = useState("transfer(address,uint256)");
   const tr = useT();
-  const hash = input.trim() && !input.trim().startsWith("0x") ? keccak256Hex(input.trim()) : "";
-  return <Workbench><Panel title={tr("selector.panel")}><Field label={tr("field.signature")}><Input className="mono" value={input} onChange={(e) => setInput(e.target.value)} /></Field></Panel><Panel title={tr("panel.readout")}><ResultRows rows={[[tr("row.signature"), input], [tr("row.functionSelector"), hash ? `0x${hash.slice(0, 8)}` : tr("value.na")], [tr("row.eventTopic"), hash ? `0x${hash}` : tr("value.na")]]} /></Panel></Workbench>;
+  // Compute over the canonical form. Hashing the raw text makes any pasted
+  // signature with spacing, parameter names, or `indexed` produce a selector
+  // that exists nowhere on chain.
+  const parsed = useMemo(() => {
+    try {
+      return { signature: parseSignature(input), error: "" };
+    } catch (error) {
+      return { signature: null, error: (error as Error).message };
+    }
+  }, [input]);
+  const hash = parsed.signature ? keccak256Hex(parsed.signature.canonical) : "";
+  return (
+    <Workbench>
+      <Panel title={tr("selector.panel")}>
+        <div className="grid gap-4">
+          <Field label={tr("field.signature")}>
+            <Input className="mono" value={input} onChange={(e) => setInput(e.target.value)} placeholder="transfer(address,uint256)" />
+          </Field>
+          <Notice>{tr("selector.canonicalNote")}</Notice>
+          {parsed.error ? <Notice tone="danger">{parsed.error}</Notice> : null}
+        </div>
+      </Panel>
+      <Panel title={tr("panel.readout")}>
+        <ResultRows
+          rows={[
+            [tr("row.signature"), parsed.signature?.canonical || tr("value.na")],
+            [tr("row.functionSelector"), hash ? `0x${hash.slice(0, 8)}` : tr("value.na")],
+            [tr("row.eventTopic"), hash ? `0x${hash}` : tr("value.na")],
+          ]}
+        />
+      </Panel>
+    </Workbench>
+  );
 }
 
-function CalldataDecoder() {
-  const [input, setInput] = useState("");
+/*
+ * Shared selector/topic lookup control.
+ *
+ * The lookup is user-initiated on purpose: typing a hash must never leak an
+ * address, a selector, or an in-progress investigation to a third party. The
+ * candidate list shows every row the databases returned and never preselects
+ * one, because a 4-byte selector legitimately collides across unrelated
+ * functions.
+ */
+function SignaturePicker({
+  hash,
+  kind,
+  settings,
+  onPick,
+  selected,
+}: {
+  hash: string;
+  kind: SignatureKind;
+  settings: Settings;
+  onPick: (signature: AbiSignature, candidate: SignatureCandidate) => void;
+  selected: string | null;
+}) {
   const tr = useT();
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<{ candidates: SignatureCandidate[]; sources: string[]; errors: string[] } | null>(null);
+  const [error, setError] = useState("");
+
+  const run = async () => {
+    setBusy(true);
+    setError("");
+    try {
+      if (settings.privacyMode) throw new Error(tr("sig.privacy"));
+      const found = await lookupSignature(hash, kind);
+      setResult({ candidates: found.candidates, sources: found.sources, errors: found.errors });
+    } catch (caught) {
+      setResult(null);
+      setError((caught as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="grid gap-3 rounded-tool border border-line bg-panel p-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted">{tr("sig.panel")}</span>
+        <Button onClick={run} disabled={busy || !hash}>{busy ? tr("sig.lookingUp") : tr("sig.lookup")}</Button>
+      </div>
+      <Notice>{tr("sig.notice")}</Notice>
+      {error ? <Notice tone="danger">{error}</Notice> : null}
+      {result ? (
+        <div className="grid gap-2">
+          <div className="flex flex-wrap items-center gap-2 text-[11px] text-faint">
+            <span>{tr("sig.sources")}: {result.sources.join(", ")}</span>
+            {result.errors.length ? <span className="text-warn">{tr("sig.partial", { errors: result.errors.join("; ") })}</span> : null}
+          </div>
+          {result.candidates.length === 0 ? <Notice>{tr("sig.empty")}</Notice> : null}
+          {result.candidates.length === 1 ? <Notice>{tr("sig.single")}</Notice> : null}
+          {result.candidates.length > 1 ? <Notice tone="warn">{tr("sig.ambiguous", { count: result.candidates.length })}</Notice> : null}
+          {result.candidates.map((candidate, index) => {
+            const active = selected !== null && candidate.canonical === selected;
+            const usable = Boolean(candidate.signature);
+            return (
+              <div
+                key={`${candidate.canonical}-${index}`}
+                className={cn(
+                  "grid gap-1.5 rounded-ui border p-2.5",
+                  active ? "border-accent/50 bg-accent/10" : "border-line bg-surface",
+                )}
+              >
+                <div className="flex flex-wrap items-start justify-between gap-2">
+                  <code className="min-w-0 break-all font-mono text-[12.5px] text-text">{candidate.canonical || candidate.text}</code>
+                  <div className="flex shrink-0 flex-wrap gap-1">
+                    <SignatureBadge tone={candidate.verified ? "ok" : "danger"}>
+                      {candidate.verified ? tr("sig.verified") : tr("sig.unverified")}
+                    </SignatureBadge>
+                    {candidate.hasVerifiedContract ? <SignatureBadge tone="ok">{tr("sig.verifiedContract")}</SignatureBadge> : null}
+                    {!usable ? <SignatureBadge tone="danger">{tr("sig.err.unparseable")}</SignatureBadge> : null}
+                  </div>
+                </div>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-[11px] text-faint">
+                    {candidate.source} · {candidateTypeList(candidate) || tr("common.none")}
+                  </span>
+                  {usable ? (
+                    <Button
+                      variant={active ? "ghost" : "default"}
+                      onClick={() => onPick(candidate.signature!, candidate)}
+                      disabled={active}
+                    >
+                      {active ? tr("sig.selected") : tr("sig.useThis")}
+                    </Button>
+                  ) : null}
+                </div>
+              </div>
+            );
+          })}
+          {result.candidates.length > 1 ? <Notice>{tr("sig.collisionWarning")}</Notice> : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function SignatureBadge({ children, tone }: { children: ReactNode; tone: "ok" | "danger" }) {
+  return (
+    <span
+      className={cn(
+        "rounded-full border px-1.5 py-0.5 text-[10px] font-semibold",
+        tone === "ok" ? "border-ok/40 bg-ok/10 text-ok" : "border-danger/40 bg-danger/10 text-danger",
+      )}
+    >
+      {children}
+    </span>
+  );
+}
+
+/** Renders decoded parameters, keeping the declared name and type visible. */
+function DecodedList({ items }: { items: DecodedParameter[] }) {
+  if (!items.length) return null;
+  return (
+    <div className="grid gap-1">
+      {items.map((item, index) => (
+        <div key={index} className="grid gap-1 rounded-ui border border-line bg-panel px-3 py-2">
+          <div className="flex flex-wrap items-baseline justify-between gap-2">
+            <span className="font-mono text-[11px] text-faint">
+              [{index}] {formatAbiType(item.type)}{item.name ? ` ${item.name}` : ""}
+            </span>
+            <CopyButton value={item.value} />
+          </div>
+          <code className="break-all font-mono text-[13px] text-text">{item.value}</code>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function CalldataDecoder({ settings }: { settings: Settings }) {
+  const tr = useT();
+  const [input, setInput] = useState("");
+  const [signatureText, setSignatureText] = useState("");
+  const [picked, setPicked] = useState<string | null>(null);
+
   const clean = input.trim().replace(/^0x/, "");
-  const selector = clean.length >= 8 ? `0x${clean.slice(0, 8)}` : tr("value.na");
-  const words = clean.slice(8).match(/.{1,64}/g) || [];
-  return <Workbench><Panel title={tr("panel.input")}><Textarea className="mono min-h-[280px]" value={input} onChange={(e) => setInput(e.target.value)} placeholder="0xa9059cbb..." /></Panel><Panel title={tr("panel.readout")}><ResultRows rows={[[tr("row.selector"), selector], [tr("row.argWords"), words.length]]} /><pre className="mt-4 max-h-[420px] overflow-auto rounded-tool border border-line bg-panel p-4 font-mono text-xs leading-6 text-muted">{words.map((word, i) => `${String(i).padStart(2, "0")}  0x${word.padEnd(64, " ")}`).join("\n") || tr("calldata.noWords")}</pre></Panel></Workbench>;
+  const selector = clean.length >= 8 ? clean.slice(0, 8).toLowerCase() : "";
+  const body = clean.slice(8);
+
+  // Manual signature input is a first-class path: an auditor often has the
+  // source and does not want to tell anyone which selector they are looking at.
+  const manual = useMemo(() => {
+    if (!signatureText.trim()) return { signature: null, error: "" };
+    try {
+      return { signature: parseSignature(signatureText), error: "" };
+    } catch (error) {
+      return { signature: null, error: (error as Error).message };
+    }
+  }, [signatureText]);
+
+  const decoded = useMemo(() => {
+    if (!manual.signature || !selector) return null;
+    try {
+      return { items: decodeParameters(manual.signature.inputs, body), error: "" };
+    } catch (error) {
+      return { items: null, error: (error as Error).message };
+    }
+  }, [manual.signature, selector, body]);
+
+  const words = body.match(/.{1,64}/g) || [];
+
+  return (
+    <Workbench>
+      <Panel title={tr("calldata.panel")}>
+        <div className="grid gap-4">
+          <Field label={tr("calldata.panel")}>
+            <Textarea className="mono min-h-[140px]" value={input} onChange={(e) => setInput(e.target.value)} placeholder={tr("calldata.placeholder")} />
+          </Field>
+          <Field label={tr("field.signature")}>
+            <Input
+              className="mono"
+              value={signatureText}
+              onChange={(e) => {
+                setSignatureText(e.target.value);
+                setPicked(null);
+              }}
+              placeholder="transfer(address,uint256)"
+            />
+          </Field>
+          <Notice>{tr("sig.lookupHint")}</Notice>
+          {manual.error ? <Notice tone="danger">{manual.error}</Notice> : null}
+          {selector ? (
+            <SignaturePicker
+              hash={selector}
+              kind="function"
+              settings={settings}
+              selected={picked}
+              onPick={(signature, candidate) => {
+                setSignatureText(signature.canonical);
+                setPicked(candidate.canonical);
+              }}
+            />
+          ) : null}
+        </div>
+      </Panel>
+      <Panel title={tr("panel.readout")}>
+        <div className="grid gap-4">
+          <ResultRows
+            rows={[
+              [tr("row.selector"), selector ? `0x${selector}` : tr("value.na")],
+              [tr("row.argWords"), words.length],
+              [tr("row.signature"), manual.signature?.canonical || tr("common.none")],
+            ]}
+          />
+          {decoded?.error ? <Notice tone="danger">{decoded.error}</Notice> : null}
+          {decoded?.items ? <DecodedList items={decoded.items} /> : null}
+          <div className="grid gap-1.5">
+            <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted">{tr("sig.rawWords")}</span>
+            <pre className="max-h-[320px] overflow-auto rounded-tool border border-line bg-panel p-4 font-mono text-xs leading-6 text-muted">
+              {words.map((word, i) => `${String(i).padStart(2, "0")}  0x${word.padEnd(64, " ")}`).join("\n") || tr("calldata.noWords")}
+            </pre>
+          </div>
+        </div>
+      </Panel>
+    </Workbench>
+  );
+}
+
+/**
+ * Event log decoding. The one hard rule here: an indexed parameter with a
+ * dynamic type is stored as keccak256(value), so the original value is gone.
+ * Saying so explicitly is the difference between a tool and a trap.
+ */
+function EventLogDecoder({ settings }: { settings: Settings }) {
+  const tr = useT();
+  const [topicsText, setTopicsText] = useState("");
+  const [dataText, setDataText] = useState("");
+  const [signatureText, setSignatureText] = useState("");
+  const [picked, setPicked] = useState<string | null>(null);
+
+  const topics = useMemo(
+    () =>
+      topicsText
+        .split(/[\s,]+/)
+        .map((item) => item.trim().replace(/^0x/i, "").toLowerCase())
+        .filter(Boolean),
+    [topicsText],
+  );
+  const topic0 = topics.find((topic) => /^[0-9a-f]{64}$/.test(topic)) ?? "";
+
+  const signature = useMemo(() => {
+    if (!signatureText.trim()) return { value: null, error: "" };
+    try {
+      return { value: parseSignature(signatureText, "event"), error: "" };
+    } catch (error) {
+      return { value: null, error: (error as Error).message };
+    }
+  }, [signatureText]);
+
+  const decoded = useMemo(() => {
+    if (!signature.value) return null;
+    try {
+      const indexed = signature.value.inputs.filter((parameter) => parameter.indexed);
+      const plain = signature.value.inputs.filter((parameter) => !parameter.indexed);
+      const topicWords = topics.filter((topic) => /^[0-9a-f]{64}$/.test(topic));
+      const expectedTopics = indexed.length + 1;
+      if (topicWords.length < 1) throw new Error(tr("event.err.topics"));
+      if (topicWords.length !== expectedTopics) {
+        throw new Error(tr("event.err.count", { expected: expectedTopics, actual: topicWords.length }));
+      }
+
+      const rows: Array<{ label: string; type: string; value: string; note?: string }> = [];
+      for (const [index, parameter] of indexed.entries()) {
+        const topic = topicWords[index + 1];
+        if (isDynamic(parameter.type)) {
+          // The topic is the hash of the value, not the value itself.
+          rows.push({
+            label: formatAbiParameter(parameter),
+            type: formatAbiType(parameter.type),
+            value: `0x${topic}`,
+            note: tr("event.dynamicIndexedWarning"),
+          });
+        } else {
+          rows.push({
+            label: formatAbiParameter(parameter),
+            type: formatAbiType(parameter.type),
+            value: decodeSingle(parameter.type, `0x${topic}`),
+            note: tr("event.fromTopic", { index: index + 1 }),
+          });
+        }
+      }
+      if (plain.length) {
+        const values = decodeParameters(plain, dataText.trim() || "0x");
+        for (const value of values) {
+          rows.push({
+            label: value.name ? `${formatAbiType(value.type)} ${value.name}` : formatAbiType(value.type),
+            type: formatAbiType(value.type),
+            value: value.value,
+            note: tr("event.fromData"),
+          });
+        }
+      }
+      return { rows, error: "" };
+    } catch (error) {
+      return { rows: null, error: (error as Error).message };
+    }
+  }, [signature.value, topics, dataText, tr]);
+
+  return (
+    <Workbench>
+      <Panel title={tr("event.panel")}>
+        <div className="grid gap-4">
+          <Field label={tr("field.topics")}>
+            <Textarea className="mono min-h-[120px]" value={topicsText} onChange={(e) => setTopicsText(e.target.value)} placeholder={`0xddf252ad...\n0x000000...`} />
+          </Field>
+          <Field label={tr("field.logData")}>
+            <Textarea className="mono min-h-[90px]" value={dataText} onChange={(e) => setDataText(e.target.value)} placeholder="0x..." />
+          </Field>
+          <Field label={tr("field.signature")}>
+            <Input
+              className="mono"
+              value={signatureText}
+              onChange={(e) => {
+                setSignatureText(e.target.value);
+                setPicked(null);
+              }}
+              placeholder="Transfer(address indexed from, address indexed to, uint256 value)"
+            />
+          </Field>
+          <Notice>{tr("event.notice")}</Notice>
+          {signature.error ? <Notice tone="danger">{signature.error}</Notice> : null}
+          {topic0 ? (
+            <SignaturePicker
+              hash={topic0}
+              kind="event"
+              settings={settings}
+              selected={picked}
+              onPick={(pickedSignature, candidate) => {
+                // Re-derive `indexed` from the number of valid topics supplied,
+                // since the database only gives us the canonical type list.
+                const validTopics = topics.filter((topic) => /^[0-9a-f]{64}$/.test(topic)).length;
+                const indexedCount = Math.max(validTopics - 1, 0);
+                const inputs = pickedSignature.inputs.map((parameter, index) => ({
+                  ...parameter,
+                  ...(index < indexedCount ? { indexed: true } : {}),
+                }));
+                setSignatureText(
+                  `${pickedSignature.name}(${inputs
+                    .map((parameter) => `${formatAbiType(parameter.type)}${parameter.indexed ? " indexed" : ""}`)
+                    .join(", ")})`,
+                );
+                setPicked(candidate.canonical);
+              }}
+            />
+          ) : null}
+        </div>
+      </Panel>
+      <Panel title={tr("panel.readout")}>
+        <div className="grid gap-4">
+          <ResultRows
+            rows={[
+              [tr("row.eventTopic"), topic0 ? `0x${topic0}` : tr("value.na")],
+              [tr("event.topicCount"), Math.max(topics.filter((topic) => /^[0-9a-f]{64}$/.test(topic)).length - 1, 0)],
+              [tr("event.dataWords"), (dataText.trim().replace(/^0x/i, "").match(/.{1,64}/g) || []).length],
+            ]}
+          />
+          {decoded?.error ? <Notice tone="danger">{decoded.error}</Notice> : null}
+          {decoded?.rows?.length ? (
+            <div className="grid gap-1">
+              {decoded.rows.map((row, index) => (
+                <div key={index} className="grid gap-1 rounded-ui border border-line bg-panel px-3 py-2">
+                  <div className="flex flex-wrap items-baseline justify-between gap-2">
+                    <span className="font-mono text-[11px] text-faint">{row.label}</span>
+                    {row.note ? <span className="text-[10px] text-faint">{row.note}</span> : null}
+                  </div>
+                  <code className="break-all font-mono text-[13px] text-text">{row.value}</code>
+                </div>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      </Panel>
+    </Workbench>
+  );
+}
+
+/**
+ * ABI encoder/decoder. Signature mode is enough for plain calls; ABI mode keeps
+ * struct field names and lets the tool decode by selector without a signature.
+ */
+function AbiCodec() {
+  const tr = useT();
+  const [mode, setMode] = useState("encode");
+  const [signatureText, setSignatureText] = useState("transfer(address,uint256)");
+  const [argsText, setArgsText] = useState("");
+  const [calldataText, setCalldataText] = useState("");
+  const [abiText, setAbiText] = useState("");
+  const [abiFn, setAbiFn] = useState("");
+  const [output, setOutput] = useState<ReactNode>(<EmptyState title={tr("abiPanel.empty.title")} hint={tr("abiPanel.empty.hint")} />);
+
+  const abiItems = useMemo(() => {
+    if (!abiText.trim()) return { items: [] as AbiItem[], error: "" };
+    try {
+      return { items: parseAbiJson(abiText), error: "" };
+    } catch (error) {
+      return { items: [] as AbiItem[], error: (error as Error).message };
+    }
+  }, [abiText]);
+
+  const abiFunctions = useMemo(
+    () => abiItems.items.filter((item): item is Extract<AbiItem, { kind: "function" }> => item.kind === "function"),
+    [abiItems.items],
+  );
+  const active = abiFunctions.find((item) => item.signature.canonical === abiFn) ?? abiFunctions[0];
+
+  const run = () => {
+    try {
+      if (mode === "encode" || mode === "constructor") {
+        const signature = parseSignature(signatureText);
+        const args = splitArgumentInput(argsText, signature.inputs.map((parameter) => parameter.type));
+        if (mode === "constructor") {
+          setOutput(
+            <div className="grid gap-3">
+              <Notice>{tr("abiPanel.constructorNote")}</Notice>
+              <ResultRows rows={[[tr("abiPanel.constructorData"), `0x${encodeParameters(signature.inputs, args)}`]]} />
+            </div>,
+          );
+          return;
+        }
+        const encoded = encodeCall(signature, args, keccak256Hex(signature.canonical).slice(0, 8));
+        setOutput(
+          <div className="grid gap-3">
+            <ResultRows
+              rows={[
+                [tr("abiPanel.selector"), encoded.selector],
+                [tr("abiPanel.calldata"), encoded.calldata],
+              ]}
+            />
+          </div>,
+        );
+        return;
+      }
+
+      if (mode === "decode") {
+        const signature = parseSignature(signatureText);
+        const body = calldataText.trim().replace(/^0x/i, "");
+        if (body.length < 8) throw new Error(tr("abiPanel.err.pickFunction"));
+        const providedSelector = body.slice(0, 8).toLowerCase();
+        const expectedSelector = keccak256Hex(signature.canonical).slice(0, 8);
+        if (providedSelector !== expectedSelector) {
+          throw new Error(
+            tr("abiPanel.err.selectorMismatch", {
+              provided: providedSelector,
+              signature: signature.canonical,
+              expected: expectedSelector,
+            }),
+          );
+        }
+        setOutput(<DecodedList items={decodeParameters(signature.inputs, body.slice(8))} />);
+        return;
+      }
+
+      // ABI mode: decode by the selector embedded in the calldata.
+      if (!active) throw new Error(tr("abiPanel.err.abiJson"));
+      const body = calldataText.trim().replace(/^0x/i, "");
+      if (body.length < 8) throw new Error(tr("abiPanel.err.pickFunction"));
+      const providedSelector = body.slice(0, 8).toLowerCase();
+      const match = abiFunctions.find(
+        (item) => keccak256Hex(item.signature.canonical).slice(0, 8) === providedSelector,
+      );
+      if (!match) throw new Error(tr("abiPanel.noMatch", { selector: providedSelector }));
+      setOutput(
+        <div className="grid gap-3">
+          <Notice tone="ok">
+            {tr("abiPanel.matchedFunction")}: <code className="font-mono">{match.signature.canonical}</code>
+          </Notice>
+          <DecodedList items={decodeParameters(match.inputs, body.slice(8))} />
+        </div>,
+      );
+    } catch (error) {
+      setOutput(<Notice tone="danger">{(error as Error).message}</Notice>);
+    }
+  };
+
+  const modeOptions = [
+    { value: "encode", label: tr("abiPanel.mode.encode") },
+    { value: "decode", label: tr("abiPanel.mode.decode") },
+    { value: "constructor", label: tr("abiPanel.mode.constructor") },
+    { value: "abi", label: tr("abiPanel.mode.abi") },
+  ];
+
+  return (
+    <Workbench>
+      <Panel title={tr("abiPanel.title")}>
+        <div className="grid gap-4">
+          <Select value={mode} onChange={setMode} options={modeOptions} />
+          {mode === "abi" ? (
+            <>
+              <Field label={tr("field.abiJson")}>
+                <Textarea className="mono min-h-[200px]" value={abiText} onChange={(e) => setAbiText(e.target.value)} placeholder='[{"type":"function","name":"..."}]' />
+              </Field>
+              {abiItems.error ? <Notice tone="danger">{abiItems.error}</Notice> : null}
+              <Field label={tr("field.calldataInput")}>
+                <Textarea className="mono min-h-[90px]" value={calldataText} onChange={(e) => setCalldataText(e.target.value)} placeholder="0x..." />
+              </Field>
+              <Notice>{tr("abiPanel.abiNotice")}</Notice>
+            </>
+          ) : (
+            <>
+              <Field label={tr("field.signature")}>
+                <Input className="mono" value={signatureText} onChange={(e) => setSignatureText(e.target.value)} placeholder="transfer(address,uint256)" />
+              </Field>
+              {mode === "decode" ? (
+                <Field label={tr("field.calldataInput")}>
+                  <Textarea className="mono min-h-[110px]" value={calldataText} onChange={(e) => setCalldataText(e.target.value)} placeholder="0xa9059cbb..." />
+                </Field>
+              ) : (
+                <>
+                  <Field label={tr("abiPanel.argsTitle")}>
+                    <Textarea className="mono min-h-[110px]" value={argsText} onChange={(e) => setArgsText(e.target.value)} placeholder={tr("call.argsPlaceholder")} />
+                  </Field>
+                  <span className="text-[11px] leading-5 text-faint">{tr("abiPanel.argsHint")}</span>
+                </>
+              )}
+              <Notice>{tr("abiPanel.notice")}</Notice>
+            </>
+          )}
+          <Button variant="primary" onClick={run}>
+            {mode === "decode" || mode === "abi" ? tr("abiPanel.action.decode") : tr("abiPanel.action.encode")}
+          </Button>
+        </div>
+      </Panel>
+      <Panel title={tr("panel.readout")}>{output}</Panel>
+    </Workbench>
+  );
 }
 
 function JsonStudio() {
@@ -929,7 +1516,8 @@ function BaseConverter() {
     { label: tr("row.inputBase"), value: fromBase },
     { label: tr("row.outputBase"), value: toBase },
     { label: tr("row.converted"), value: parsed.output },
-    { label: tr("row.decimal"), value: parsed.value.toString() },
+    // The decimal row comes from buildRadixRows below; listing it here as well
+    // produced two rows with the same label, which React dedupes by key.
     { label: tr("row.hexPrefixed"), value: `${parsed.value < 0n ? "-" : ""}0x${formatRadixInteger(absBigInt(parsed.value), 16, uppercase)}` },
     { label: tr("row.binaryPrefixed"), value: `${parsed.value < 0n ? "-" : ""}0b${formatGroupedRadix(absBigInt(parsed.value), 2, uppercase, grouped)}` },
     ...buildRadixRows(parsed.value, uppercase, grouped, tr),
@@ -1284,7 +1872,9 @@ function EthCallInspector({ settings }: { settings: Settings }) {
     try {
       const signature = parseSignature(signatureText);
       const selector = keccak256Hex(signature.canonical).slice(0, 8);
-      const args = splitArgs(argsText);
+      // Argument boundaries come from the declared types. Splitting on commas
+      // would cut a string argument in half at its first comma.
+      const args = splitArgumentInput(argsText, signature.inputs.map((parameter) => parameter.type));
       const call = encodeCall(signature, args, selector);
       return { signature, selector, args, call, error: "" };
     } catch (error) {
@@ -1293,7 +1883,10 @@ function EthCallInspector({ settings }: { settings: Settings }) {
   }, [signatureText, argsText]);
 
   const blocks = useMemo(() => {
-    const list = splitArgs(blocksText);
+    const list = blocksText
+      .split(/[\s,]+/)
+      .map((item) => item.trim())
+      .filter(Boolean);
     return list.length ? list : ["latest"];
   }, [blocksText]);
 
@@ -1320,7 +1913,7 @@ function EthCallInspector({ settings }: { settings: Settings }) {
           throw error;
         }
         const values = parsed.signature.outputs.length
-          ? decodeValues(parsed.signature.outputs, raw)
+          ? decodeParameters(parsed.signature.outputs, raw).map((parameter) => parameter.value)
           : [];
         readings.push({ block: session.blockNumber !== null ? `#${session.blockNumber}` : session.blockTag, raw, values });
       }
@@ -1332,7 +1925,7 @@ function EthCallInspector({ settings }: { settings: Settings }) {
             [tr("row.signature"), parsed.signature.canonical],
             [tr("row.selector"), `0x${parsed.selector}`],
             [tr("row.arguments"), parsed.args.length ? parsed.args.join(", ") : tr("common.none")],
-            [tr("row.returnTypes"), parsed.signature.outputs.length ? parsed.signature.outputs.map(formatAbiType).join(", ") : tr("common.none")],
+            [tr("row.returnTypes"), parsed.signature.outputs.length ? parsed.signature.outputs.map((parameter) => formatAbiType(parameter.type)).join(", ") : tr("common.none")],
           ]} />
           {readings.map((reading) => (
             <div key={reading.block} className="grid gap-2 rounded-tool border border-line bg-panel p-3">
@@ -1355,10 +1948,12 @@ function EthCallInspector({ settings }: { settings: Settings }) {
                   <Notice>{tr("call.noOutput")}</Notice>
                   {/* Without declared return types there is nothing to decode,
                       but the caller still needs the number. Surface it as both
-                      hex and decimal rather than burying it in raw data. */}
+                      hex and decimal rather than burying it in raw data.
+                      `BigInt("0x")` throws, so an empty return is handled
+                      explicitly instead of crashing the render. */}
                   <div className="grid gap-1 rounded-ui border border-line bg-surface px-3 py-2">
                     <span className="text-[11px] text-faint">{tr("call.asUint")}</span>
-                    <code className="break-all font-mono text-[13px] text-text">{String(BigInt(reading.raw))}</code>
+                    <code className="break-all font-mono text-[13px] text-text">{asDecimal(reading.raw)}</code>
                     <code className="break-all font-mono text-[11px] text-muted">{reading.raw}</code>
                   </div>
                 </div>
@@ -1572,6 +2167,32 @@ function CommandPalette({ open, query, setQuery, language, onClose, onSelect }: 
 
 function loadState() {
   try { return JSON.parse(localStorage.getItem(STATE_KEY) || "{}"); } catch { return {}; }
+}
+/** Renders raw return data as a decimal integer without throwing on empty hex. */
+function asDecimal(raw: string) {
+  const clean = raw.trim().replace(/^0x/i, "");
+  if (!clean) return "0x (no return data)";
+  try {
+    return BigInt(`0x${clean}`).toString();
+  } catch {
+    return "not a hex integer";
+  }
+}
+
+/**
+ * RPC responses are untrusted input. A node that answers `0x`, `null`, or
+ * non-hex text would otherwise blow up in JSX during render — and with no
+ * error boundary that unmounts the whole app.
+ */
+function requireHexWord(value: string) {
+  const clean = value.trim().replace(/^0x/i, "");
+  // eth_getStorageAt must return one 32-byte word. An empty answer is not zero;
+  // it means the node did not do what was asked, so say that instead of
+  // rendering a comfortable-looking 0.
+  if (!clean) throw new Error("RPC returned no storage value; the endpoint may not support this slot or block.");
+  if (!/^[0-9a-fA-F]*$/.test(clean)) throw new Error(`RPC returned a non-hex storage value: ${value.slice(0, 80)}`);
+  if (clean.length > 64) throw new Error("RPC returned a storage value longer than 32 bytes.");
+  return `0x${clean.padStart(64, "0")}`;
 }
 function loadSettingsCache() {
   try { return JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}"); } catch { return {}; }

@@ -92,9 +92,16 @@ export function keccak256Hex(input: Uint8Array | string) {
   const bytes = typeof input === "string" ? new TextEncoder().encode(input) : input;
   const rate = 136;
   const state = new Array<bigint>(25).fill(0n);
+  // Keccak padding is `0x01 || zeros || 0x80` up to the next block boundary.
+  // When the message plus the 0x01 domain byte already fills a block exactly,
+  // both bits live in that final byte (0x01 | 0x80) instead of a second block.
   const padded = [...bytes, 0x01];
-  while (padded.length % rate !== rate - 1) padded.push(0);
-  padded.push(0x80);
+  if (padded.length % rate === 0) {
+    padded[padded.length - 1] |= 0x80;
+  } else {
+    while (padded.length % rate !== rate - 1) padded.push(0);
+    padded.push(0x80);
+  }
   for (let offset = 0; offset < padded.length; offset += rate) {
     for (let i = 0; i < rate; i += 1) {
       state[Math.floor(i / 8)] ^= BigInt(padded[offset + i]) << BigInt((i % 8) * 8);

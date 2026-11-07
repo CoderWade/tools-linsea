@@ -30,6 +30,11 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # Run the suite before building. The workflow used to only build, so a
+      # codec or Keccak regression could reach production silently.
+      - name: Test
+        run: npm test
+
       - name: Build
         run: npm run build
 
