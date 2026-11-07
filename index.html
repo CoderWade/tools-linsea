@@ -23,8 +23,21 @@
     <!-- theme-color follows the palette so mobile browser chrome matches the app. -->
     <meta name="theme-color" content="#0C0F15" media="(prefers-color-scheme: dark)" />
     <meta name="theme-color" content="#F4F6F9" media="(prefers-color-scheme: light)" />
-    <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
-    <link rel="apple-touch-icon" href="./favicon.svg" />
+    <!--
+      Icon links carry a version query. Browsers cache favicons far more
+      aggressively than pages (Chrome can keep one for a whole session and,
+      on a revisit, reuse it without revalidating), so an unversioned
+      href keeps showing the previous mark after a rebrand. Bump ?v= whenever
+      any of these files changes.
+
+      The PNG entries come first on purpose: Safari — including iOS — does not
+      render SVG favicons, and it needs a raster apple-touch-icon to avoid
+      downscaling a square screenshot onto the home screen.
+    -->
+    <link rel="icon" href="./favicon-32.png?v=2" sizes="32x32" type="image/png" />
+    <link rel="icon" href="./favicon-16.png?v=2" sizes="16x16" type="image/png" />
+    <link rel="icon" href="./favicon.svg?v=2" sizes="any" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="./favicon-180.png?v=2" sizes="180x180" />
     <title>Timeminer Tools</title>
   </head>
   <body>
