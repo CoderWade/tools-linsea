@@ -1,4 +1,4 @@
-# Linsea Tools 部署指南
+# Timeminer Tools 部署指南
 
 [English](#english) · [中文](#中文)
 
@@ -21,7 +21,7 @@ GitHub Pages + Cloudflare 自定义域名，纯静态部署，无后端。
 文件结构：
 
 ```
-tools-linsea/
+timeminer-tools/
 ├── src/                    # React + TypeScript 源码
 │   ├── App.tsx             # 工具注册表、外壳、14 个工作台
 │   ├── components/ui.tsx   # 基础组件
@@ -45,7 +45,7 @@ tools-linsea/
 ### 第一步：推送到 GitHub
 
 ```bash
-cd /path/to/tools-linsea
+cd /path/to/timeminer-tools
 
 # 如果还没有 git remote，先添加
 git remote add origin git@github.com:你的用户名/你的仓库名.git
@@ -165,7 +165,7 @@ A **fully static single-page application**:
 Layout:
 
 ```
-tools-linsea/
+timeminer-tools/
 ├── src/                    # React + TypeScript source
 │   ├── App.tsx             # tool registry, shell, 14 workbenches
 │   ├── components/ui.tsx   # UI primitives
@@ -189,7 +189,7 @@ tools-linsea/
 ### Step 1 — Push to GitHub
 
 ```bash
-cd /path/to/tools-linsea
+cd /path/to/timeminer-tools
 
 git remote add origin git@github.com:YOUR_USER/YOUR_REPO.git
 # or over HTTPS

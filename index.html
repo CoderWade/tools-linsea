@@ -3,10 +3,12 @@
   <head>
     <meta charset="utf-8" />
     <!-- Resolve the stored theme before first paint, otherwise the dark default
-         flashes light for users who picked dark. Keep this tiny and synchronous. -->
+         flashes light for users who picked dark. Keep this tiny and synchronous.
+         The legacy key is read too, so the rename does not reset the theme. -->
     <script>
       try {
-        var saved = JSON.parse(localStorage.getItem("linsea-react-state") || "{}");
+        var raw = localStorage.getItem("timeminer-react-state") || localStorage.getItem("linsea-react-state");
+        var saved = JSON.parse(raw || "{}");
         if (saved.theme !== "light") document.documentElement.classList.add("dark");
       } catch (e) {
         document.documentElement.classList.add("dark");
@@ -16,12 +18,14 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta
       name="description"
-      content="Linsea Tools: a privacy-first toolbox for Web3 security, developers, commerce operations, and risk testing."
+      content="Timeminer Tools: a privacy-first toolbox for Web3 security, developers, commerce operations, and risk testing."
     />
-    <meta name="theme-color" content="#0d1117" media="(prefers-color-scheme: dark)" />
-    <meta name="theme-color" content="#f4f6f9" media="(prefers-color-scheme: light)" />
+    <!-- theme-color follows the palette so mobile browser chrome matches the app. -->
+    <meta name="theme-color" content="#0C0F15" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#F4F6F9" media="(prefers-color-scheme: light)" />
     <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
-    <title>Linsea Tools</title>
+    <link rel="apple-touch-icon" href="./favicon.svg" />
+    <title>Timeminer Tools</title>
   </head>
   <body>
     <div id="root"></div>

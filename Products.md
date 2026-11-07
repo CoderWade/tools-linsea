@@ -1,4 +1,4 @@
-# Linsea Tools 产品文档
+# Timeminer Tools 产品文档
 
 [English](#english) · [中文](#中文)
 
@@ -245,7 +245,7 @@ AES-GCM 加解密试验台：
 
 **已审计**：17 个工具 × 2 语言全量扫描，英文模式零 CJK 泄漏，中文模式零英文散文泄漏。
 
-**主题与语言的持久化**：存于 `localStorage` 的 `linsea-react-state`。主题在首帧前由内联脚本解析，深色用户不会闪白。
+**主题与语言的持久化**：存于 `localStorage` 的 `timeminer-react-state`。主题在首帧前由内联脚本解析，深色用户不会闪白。
 
 ### 8. 技术架构（实际）
 
@@ -293,8 +293,8 @@ src/
 
 **本地存储**（`localStorage`）：
 
-- `linsea-react-state`：当前分类、当前工具、主题、语言、最近使用（存 8 条、展示 5 条）、设置快照。
-- `linsea-tools-settings`：Alchemy / Infura Key、默认链、自定义链与 RPC 地址、隐私模式开关。
+- `timeminer-react-state`：当前分类、当前工具、主题、语言、最近使用（存 8 条、展示 5 条）、设置快照。
+- `timeminer-tools-settings`：Alchemy / Infura Key、默认链、自定义链与 RPC 地址、隐私模式开关。
 
 **不保存**：输入过的合约地址、calldata、JWT、明文/密文、对比文本、计算历史。
 
@@ -564,7 +564,7 @@ Four token families, each with exactly one job.
 
 **Audited**: all 17 tools in both languages. Zero CJK characters in English mode, zero English prose in Chinese mode.
 
-**Persistence**: theme and language live in `localStorage` under `linsea-react-state`. The theme is resolved before first paint by an inline script, so dark-mode users never see a white flash.
+**Persistence**: theme and language live in `localStorage` under `timeminer-react-state`. The theme is resolved before first paint by an inline script, so dark-mode users never see a white flash.
 
 ### 8. Architecture (actual)
 
@@ -612,8 +612,8 @@ src/
 
 **`localStorage` contents**:
 
-- `linsea-react-state` — active section, active tool, theme, language, recent tools (8 stored, 5 shown), settings snapshot.
-- `linsea-tools-settings` — Alchemy / Infura keys, default chain, custom chain and RPC URL, privacy-mode flag.
+- `timeminer-react-state` — active section, active tool, theme, language, recent tools (8 stored, 5 shown), settings snapshot.
+- `timeminer-tools-settings` — Alchemy / Infura keys, default chain, custom chain and RPC URL, privacy-mode flag.
 
 **Never stored**: contract addresses you entered, calldata, JWTs, plaintext or ciphertext, compared text, calculation history.
 

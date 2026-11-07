@@ -17,6 +17,7 @@ export type Lang = "en" | "zh";
  */
 export const strings = {
   // Shell
+  "app.brand": ["Timeminer", "Timeminer"],
   "app.tagline": ["Security workbench", "安全工作台"],
   "app.footer": ["Local-first utilities for serious debugging.", "本地优先，为严肃的调试工作而做。"],
   "search.placeholder": ["Search tools or actions", "搜索工具或操作"],

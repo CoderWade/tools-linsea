@@ -22,7 +22,7 @@ import {
   Sun,
   Terminal,
 } from "lucide-react";
-import { ReactNode, useEffect, useMemo, useState } from "react";
+import { ReactNode, useEffect, useId, useMemo, useState } from "react";
 import { Button, Combobox, CommandInput, CopyButton, EmptyState, Field, IconButton, Input, Modal, Notice, Panel, ResultRows, Select, Tabs, Textarea, cn } from "./components/ui";
 import { LanguageContext, useLang, useT, type Lang, type StringKey, t } from "./lib/i18n";
 import {
@@ -99,8 +99,11 @@ type Settings = {
   privacyMode: boolean;
 };
 
-const STATE_KEY = "linsea-react-state";
-const SETTINGS_KEY = "linsea-tools-settings";
+const STATE_KEY = "timeminer-react-state";
+const SETTINGS_KEY = "timeminer-tools-settings";
+/** Pre-rename keys, read once so existing users keep their theme and language. */
+const LEGACY_STATE_KEY = "linsea-react-state";
+const LEGACY_SETTINGS_KEY = "linsea-tools-settings";
 
 const categories: Array<{ id: CategoryId; name: string; zh: string }> = [
   { id: "reverse", name: "Reverse Security", zh: "逆向安全" },
@@ -224,9 +227,9 @@ export function App() {
     <div className="grid min-h-screen grid-cols-[260px_minmax(0,1fr)] gap-4 p-4 max-lg:grid-cols-1">
       <aside className="sticky top-4 flex h-[calc(100vh-2rem)] flex-col overflow-hidden rounded-tool border border-line bg-surface p-3 max-lg:static max-lg:h-auto">
         <div className="mb-4 flex items-center gap-3 border-b border-line pb-4">
-          <div className="grid h-10 w-10 place-items-center rounded-ui border border-accent/35 bg-accent/10 text-base font-bold text-accent">L</div>
+          <BrandMark />
           <div>
-            <div className="text-[15px] font-bold text-text">Linsea Tools</div>
+            <div className="text-[15px] font-bold text-text">{tr("app.brand")}</div>
             <div className="text-xs text-muted">{tr("app.tagline")}</div>
           </div>
         </div>
@@ -403,6 +406,44 @@ function ToolWorkbench({ tool, settings }: { tool: Tool; settings: Settings }) {
     case "market-clock": return <MarketClock />;
     default: return null;
   }
+}
+
+/**
+ * The brand mark: a block whose face is a clock, hands knocked out with a mask.
+ *
+ * Same geometry as public/favicon.svg, kept in sync by hand because the favicon
+ * has to stay a standalone file. Hand lengths are asymmetric so the mark reads
+ * as a dial rather than the letter L; see the comment in the favicon for why
+ * that matters at small sizes.
+ *
+ * The knocked-out hands reveal the shape painted underneath them, so that shape
+ * is `fill-canvas` rather than the panel behind the SVG: a hand that matches the
+ * surrounding card vanishes at 40px. Everything is a theme token, so the mark
+ * needs no per-theme asset, and the mask id is unique per instance so React can
+ * render it more than once.
+ */
+const BRAND_HEXAGON = "M32 11L50.19 21.5V42.5L32 53L13.81 42.5V21.5L32 11Z";
+
+function BrandMark() {
+  const maskId = `tm-hands-${useId().replace(/:/g, "")}`;
+  return (
+    <svg viewBox="0 0 64 64" aria-hidden="true" className="h-10 w-10 shrink-0">
+      <defs>
+        <mask id={maskId}>
+          <rect width="64" height="64" fill="#fff" />
+          <g stroke="#000" strokeWidth="4" strokeLinecap="round">
+            <path d="M32 32V20.5" />
+            <path d="M32 32H21" />
+          </g>
+          <circle cx="32" cy="32" r="2.9" fill="#000" />
+        </mask>
+      </defs>
+      <rect x="0.75" y="0.75" width="62.5" height="62.5" rx="15.25" className="fill-panel stroke-line" strokeWidth="1.5" />
+      {/* Visible only through the hand cut-outs. */}
+      <path d={BRAND_HEXAGON} className="fill-canvas" />
+      <path d={BRAND_HEXAGON} className="fill-accent" mask={`url(#${maskId})`} />
+    </svg>
+  );
 }
 
 function Workbench({ children, wide = false }: { children: ReactNode; wide?: boolean }) {
@@ -1311,7 +1352,7 @@ function AbiCodec() {
 
 function JsonStudio() {
   const tr = useT();
-  const [input, setInput] = useState('{"name":"Linsea","tools":18,"privacy":true}');
+  const [input, setInput] = useState('{"name":"Timeminer","tools":17,"privacy":true}');
   const [mode, setMode] = useState("format");
   const output = useMemo(() => {
     try {
@@ -1782,7 +1823,7 @@ function UsDstBanner({ now }: { now: Date }) {
 }
 
 function HashSuite() {
-  const [input, setInput] = useState("hello linsea");
+  const [input, setInput] = useState("hello timeminer");
   const tr = useT();
   const [mode, setMode] = useState("keccak");
   const [output, setOutput] = useState("");
@@ -2023,7 +2064,7 @@ function EncryptionTool() {
   const [mode, setMode] = useState("encrypt");
   const tr = useT();
   const [data, setData] = useState(() => tr("enc.sample.data"));
-  const [password, setPassword] = useState("linsea-demo");
+  const [password, setPassword] = useState("timeminer-demo");
   const [output, setOutput] = useState<ReactNode>(<EmptyState title={tr("enc.empty.title")} hint={tr("enc.empty.hint")} />);
   const run = async () => {
     try {
@@ -2166,7 +2207,13 @@ function CommandPalette({ open, query, setQuery, language, onClose, onSelect }: 
 }
 
 function loadState() {
-  try { return JSON.parse(localStorage.getItem(STATE_KEY) || "{}"); } catch { return {}; }
+  try {
+    const current = localStorage.getItem(STATE_KEY);
+    if (current) return JSON.parse(current);
+    // First run after the rename: adopt the old snapshot so the user keeps
+    // their theme, language, and recent tools instead of being reset.
+    return JSON.parse(localStorage.getItem(LEGACY_STATE_KEY) || "{}");
+  } catch { return {}; }
 }
 /** Renders raw return data as a decimal integer without throwing on empty hex. */
 function asDecimal(raw: string) {
@@ -2195,7 +2242,11 @@ function requireHexWord(value: string) {
   return `0x${clean.padStart(64, "0")}`;
 }
 function loadSettingsCache() {
-  try { return JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}"); } catch { return {}; }
+  try {
+    const current = localStorage.getItem(SETTINGS_KEY);
+    if (current) return JSON.parse(current);
+    return JSON.parse(localStorage.getItem(LEGACY_SETTINGS_KEY) || "{}");
+  } catch { return {}; }
 }
 /*
  * Keywords exist for search, so both scripts are indexed. Display, however,
