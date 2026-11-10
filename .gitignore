@@ -5,3 +5,7 @@ tsconfig.tsbuildinfo
 .env
 .env.*
 !.env.example
+
+# Visa Developer credentials and generated keys (never commit)
+.visa-keys/
+*.pem

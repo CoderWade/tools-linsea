@@ -21,8 +21,10 @@ import {
   ShieldCheck,
   Sun,
   Terminal,
+  ArrowRightLeft,
+  TrendingUp,
 } from "lucide-react";
-import { ReactNode, useEffect, useId, useMemo, useState } from "react";
+import { ReactNode, useCallback, useEffect, useId, useMemo, useState } from "react";
 import { Button, Combobox, CommandInput, CopyButton, EmptyState, Field, IconButton, Input, Modal, Notice, Panel, ResultRows, Select, Tabs, Textarea, cn } from "./components/ui";
 import { LanguageContext, useLang, useT, type Lang, type StringKey, t } from "./lib/i18n";
 import {
@@ -57,8 +59,11 @@ import {
 } from "./lib/evm";
 import { CHAINS, CUSTOM_CHAIN_ID, chainSelectOptions, parseChainIdInput, resolveRpc, validateRpcSettings } from "./lib/chains";
 import { openRpcSession, rpcBatch, rpcRequest, type RpcSession } from "./lib/rpc";
+import { CURRENCIES, CURRENCY_BY_CODE, POPULAR_CODES, flagEmoji } from "./lib/currencies";
+import { RATE_ATTRIBUTION, REFRESH_WINDOW_END, REFRESH_WINDOW_START, fetchDailyRates, fetchMastercardRates, fetchSourceRates, fetchUnionPayRates, fetchVisaRates, inRefreshWindow, todayKey, type RateCrossCheck } from "./lib/dailyRates";
+import { type RateSortKey } from "./lib/rates";
 
-type CategoryId = "reverse" | "crypto" | "developer" | "general";
+type CategoryId = "reverse" | "crypto" | "developer" | "general" | "exchange";
 type ToolId =
   | "storage-slot"
   | "source-layout"
@@ -76,7 +81,8 @@ type ToolId =
   | "timestamp-pro"
   | "base-converter"
   | "text-compare"
-  | "market-clock";
+  | "market-clock"
+  | "exchange-rate";
 
 type Tool = {
   id: ToolId;
@@ -110,6 +116,7 @@ const categories: Array<{ id: CategoryId; name: string; zh: string }> = [
   { id: "crypto", name: "Encoding & Crypto", zh: "编码与密码" },
   { id: "developer", name: "Developer", zh: "通用开发" },
   { id: "general", name: "General Tools", zh: "通用工具" },
+  { id: "exchange", name: "Exchange Rate", zh: "汇率工具" },
 ];
 
 /*
@@ -139,6 +146,11 @@ const familyTone: Record<CategoryId, { stripe: string; text: string; chip: strin
     text: "text-family-general",
     chip: "border-line bg-surface text-muted",
   },
+  exchange: {
+    stripe: "bg-family-general",
+    text: "text-family-general",
+    chip: "border-line bg-surface text-muted",
+  },
 };
 
 const tools: Tool[] = [
@@ -158,6 +170,7 @@ const tools: Tool[] = [
   { id: "timestamp-pro", category: "developer", name: "Timestamp Pro", zh: "时间戳工具", description: { en: "Convert timestamps and dates across IANA timezones.", zh: "跨 IANA 时区转换时间戳与日期。" }, keywords: ["timestamp", "unix", "timezone", "时间戳", "时区"], badges: { en: ["IANA", "Date"], zh: ["IANA", "日期"] }, icon: <Clock3 /> },
   { id: "base-converter", category: "crypto", name: "Base Converter", zh: "进制转换器", description: { en: "Convert integers across binary, octal, decimal, hex, and custom bases.", zh: "在二进制、八进制、十进制、十六进制与自定义进制之间转换整数。" }, keywords: ["base", "radix", "binary", "hex", "decimal", "进制", "二进制", "十六进制"], badges: { en: ["BigInt", "2-36"], zh: ["BigInt", "2–36 进制"] }, icon: <Binary /> },
   { id: "text-compare", category: "developer", name: "Text Compare", zh: "文本对比", description: { en: "Compare two text versions with readable line-level diffs.", zh: "逐行比对两段文本，输出可读的差异。" }, keywords: ["diff", "text", "compare", "对比", "差异"], badges: { en: ["Diff", "Local"], zh: ["差异对比", "本地"] }, icon: <Contrast /> },
+  { id: "exchange-rate", category: "exchange", name: "Exchange Rate Converter", zh: "汇率工具", description: { en: "USD-based rate table for all 154 ISO 4217 currencies, with UnionPay, Mastercard and Visa card rates alongside Google, Sina, XE, currency-api and ExchangeRate-API.", zh: "以美元为基准的 154 种法币汇率表，含银联、Mastercard、Visa 卡组织汇率，以及 Google、新浪、XE、currency-api、ExchangeRate-API 报价。" }, keywords: ["exchange", "rate", "currency", "forex", "fx", "convert", "usd", "cny", "eur", "jpy", "汇率", "汇率工具", "兑换", "货币", "换算", "美元", "人民币", "日元", "欧元", "银联", "visa", "mastercard", "万事达"], badges: { en: ["154 currencies", "Daily refresh"], zh: ["154 种法币", "每日更新"] }, icon: <TrendingUp /> },
   { id: "market-clock", category: "general", name: "Market Clock", zh: "时间看盘", description: { en: "Live Beijing / Hong Kong / New York clocks with US DST state and trading-session status for US, A-share, and HK markets.", zh: "北京、香港、纽约实时时钟，含美国夏令时状态与美股、A 股、港股的交易时段。" }, keywords: ["market", "clock", "timezone", "trading", "dst", "开盘", "收盘", "夏令时", "冬令时", "美股", "港股", "A股", "时间", "看盘"], badges: { en: ["Live clock", "DST aware", "Trading hours"], zh: ["实时时钟", "夏令时", "交易时段"] }, icon: <Globe2 /> },
 ];
 
@@ -404,6 +417,7 @@ function ToolWorkbench({ tool, settings }: { tool: Tool; settings: Settings }) {
     case "base-converter": return <BaseConverter />;
     case "text-compare": return <TextCompare />;
     case "market-clock": return <MarketClock />;
+    case "exchange-rate": return <ExchangeRateTool settings={settings} />;
     default: return null;
   }
 }
@@ -2810,3 +2824,707 @@ function usDstInfo(now: Date) {
   const next = now.getTime() < start.getTime() ? start : inDst ? end : new Date(Date.UTC(year + 1, 2, nthWeekdayOfMonth(year + 1, 3, 0, 2), 7, 0, 0));
   return { inDst, next, abbr: inDst ? "EDT" : "EST", offset: inDst ? "UTC-4" : "UTC-5" };
 }
+
+// ===== Exchange Rate tool (ported) =====
+
+const RATE_STORAGE_KEY = "linsea-exchange-rates-v6";
+
+type StoredRates = {
+  rates: Record<string, number>;
+  unionPay: Record<string, number>;
+  google: Record<string, number>;
+  sina: Record<string, number>;
+  xe: Record<string, number>;
+  date: string;
+  unionPayDate: string;
+  unionPayNote: string;
+  source: string;
+  rateSource: "primary" | "backup";
+  backupRates: Record<string, number>;
+  visa: Record<string, number>;
+  visaEnv: string;
+  mastercard: Record<string, number>;
+  mastercardDate: string;
+  crossCheck: RateCrossCheck | null;
+  fetchedDay: string;
+};
+
+/**
+ * Daily-refresh rate table.
+ *
+ * Fetches at most once per day, inside the 17:00-18:00 window:
+ *   - reference rates for all 154 currencies (one CDN JSON file)
+ *   - UnionPay's own official clearing rates (relayed, no CORS upstream)
+ * The snapshot is cached in localStorage keyed by local calendar day.
+ */
+function useRateTable(enabled: boolean) {
+  const [rates, setRates] = useState<Record<string, number>>({});
+  const [unionPay, setUnionPay] = useState<Record<string, number>>({});
+  const [sourceProgress, setSourceProgress] = useState<{ done: number; total: number } | null>(null);
+  const [google, setGoogle] = useState<Record<string, number>>({});
+  const [sina, setSina] = useState<Record<string, number>>({});
+  const [xe, setXe] = useState<Record<string, number>>({});
+  const [unionPayDate, setUnionPayDate] = useState("");
+  const [unionPayNote, setUnionPayNote] = useState("");
+  const [status, setStatus] = useState<"loading" | "live" | "blocked" | "error">(enabled ? "loading" : "blocked");
+  const [asOf, setAsOf] = useState("");
+  const [sourceLabel, setSourceLabel] = useState("");
+  const [rateSource, setRateSource] = useState<"primary" | "backup">("primary");
+  const [backupRates, setBackupRates] = useState<Record<string, number>>({});
+  const [visa, setVisa] = useState<Record<string, number>>({});
+  const [visaEnv, setVisaEnv] = useState("");
+  const [mastercard, setMastercard] = useState<Record<string, number>>({});
+  const [mastercardDate, setMastercardDate] = useState("");
+  const [crossCheck, setCrossCheck] = useState<RateCrossCheck | null>(null);
+  const [refreshedDay, setRefreshedDay] = useState("");
+
+  const persist = useCallback((next: StoredRates) => {
+    try {
+      localStorage.setItem(RATE_STORAGE_KEY, JSON.stringify(next));
+    } catch {
+      /* storage unavailable */
+    }
+  }, []);
+
+  const refresh = useCallback(
+    async (force = false) => {
+      if (!enabled) {
+        setStatus("blocked");
+        return;
+      }
+      setStatus("loading");
+
+      let fetchedRates: Record<string, number> | null = null;
+      let fetchedDate = "";
+      let fetchedSource = "";
+      let fetchedCrossCheck: RateCrossCheck | null = null;
+      let fetchedUsed: "primary" | "backup" = "primary";
+      let fetchedBackupRates: Record<string, number> = {};
+
+      // Run every feed concurrently. Each one writes its own column the moment it
+      // arrives, so a slow source (Google/XE are paced at ~11s per currency) can
+      // no longer hold back the fast ones.
+      const targets = CURRENCIES.map((currency) => currency.code).filter((code) => code !== "USD");
+
+      let nextUnionPay: Record<string, number> = {};
+      let nextUnionPayDate = "";
+      let nextUnionPayNote = "";
+      let nextVisa: Record<string, number> = {};
+      let nextVisaEnv = "";
+      let nextMastercard: Record<string, number> = {};
+      let nextMastercardDate = "";
+      let nextGoogle: Record<string, number> = {};
+      let nextSina: Record<string, number> = {};
+      let nextXe: Record<string, number> = {};
+
+      const referenceTask = (async () => {
+        try {
+          const daily = await fetchDailyRates();
+          fetchedRates = daily.rates;
+          fetchedDate = daily.date;
+          fetchedSource = daily.source;
+          fetchedCrossCheck = daily.crossCheck;
+          fetchedUsed = daily.used;
+          fetchedBackupRates = daily.backupRates || {};
+          setBackupRates(fetchedBackupRates);
+          setRates(daily.rates);
+          setAsOf(daily.date);
+          setSourceLabel(daily.source);
+          setRateSource(daily.used);
+          setCrossCheck(daily.crossCheck);
+        } catch (error) {
+          console.warn("reference rates failed:", (error as Error).message);
+        }
+      })();
+
+      const unionPayTask = (async () => {
+        try {
+          const up = await fetchUnionPayRates();
+          nextUnionPay = up.rates;
+          nextUnionPayDate = up.date;
+          nextUnionPayNote = up.note;
+          setUnionPay(up.rates);
+          setUnionPayDate(up.date);
+          setUnionPayNote(up.note);
+        } catch (error) {
+          nextUnionPayNote = (error as Error).message;
+          setUnionPayNote(nextUnionPayNote);
+          console.warn("unionpay failed:", (error as Error).message);
+        }
+      })();
+
+      const visaTask = (async () => {
+        try {
+          const visaResult = await fetchVisaRates(targets);
+          nextVisa = visaResult.rates;
+          nextVisaEnv = visaResult.env;
+          setVisa(nextVisa);
+          setVisaEnv(nextVisaEnv);
+        } catch (error) {
+          console.warn("visa rates failed:", (error as Error).message);
+        }
+      })();
+
+      const mastercardTask = (async () => {
+        try {
+          const mc = await fetchMastercardRates(targets);
+          nextMastercard = mc.rates;
+          nextMastercardDate = mc.fxDate;
+          setMastercard(nextMastercard);
+          setMastercardDate(nextMastercardDate);
+        } catch (error) {
+          console.warn("mastercard rates failed:", (error as Error).message);
+        }
+      })();
+
+      const sourcesTask = (async () => {
+        try {
+          setSourceProgress({ done: 0, total: targets.length });
+          const sources = await fetchSourceRates(targets, {
+            chunkSize: 6,
+            onProgress: (done, total, partial) => {
+              setSourceProgress({ done, total });
+              setGoogle({ ...partial.rates.google });
+              setSina({ ...partial.rates.sina });
+              setXe({ ...partial.rates.xe });
+            },
+          });
+          nextGoogle = sources.rates.google;
+          nextSina = sources.rates.sina;
+          nextXe = sources.rates.xe;
+          setGoogle(nextGoogle);
+          setSina(nextSina);
+          setXe(nextXe);
+        } catch (error) {
+          console.warn("source rates failed:", (error as Error).message);
+        } finally {
+          setSourceProgress(null);
+        }
+      })();
+
+      // Only the reference feed gates the persisted snapshot; the card and spot
+      // feeds write incrementally and are saved with it.
+      await Promise.all([referenceTask, unionPayTask, visaTask, mastercardTask, sourcesTask]);
+
+      if (fetchedRates) {
+        const day = todayKey();
+        setRefreshedDay(day);
+        persist({
+          rates: fetchedRates,
+          unionPay: nextUnionPay,
+          google: nextGoogle,
+          sina: nextSina,
+          xe: nextXe,
+          date: fetchedDate,
+          unionPayDate: nextUnionPayDate,
+          unionPayNote: nextUnionPayNote,
+          source: fetchedSource,
+          rateSource: fetchedUsed,
+          backupRates: fetchedBackupRates,
+          visa: nextVisa,
+          visaEnv: nextVisaEnv,
+          mastercard: nextMastercard,
+          mastercardDate: nextMastercardDate,
+          crossCheck: fetchedCrossCheck,
+          fetchedDay: day,
+        });
+        setStatus("live");
+      } else if (!force && Object.keys(rates).length) {
+        setStatus("live");
+      } else {
+        setStatus("error");
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [enabled, rates],
+  );
+
+  useEffect(() => {
+    if (!enabled) {
+      setStatus("blocked");
+      return;
+    }
+    let cached: StoredRates | null = null;
+    try {
+      const raw = localStorage.getItem(RATE_STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed?.rates) {
+          cached = {
+            rates: parsed.rates,
+            unionPay: parsed.unionPay || {},
+            google: parsed.google || {},
+            sina: parsed.sina || {},
+            xe: parsed.xe || {},
+            date: parsed.date || "",
+            unionPayDate: parsed.unionPayDate || "",
+            unionPayNote: parsed.unionPayNote || "",
+            source: parsed.source || "",
+            rateSource: parsed.rateSource === "backup" ? "backup" : "primary",
+            backupRates: parsed.backupRates || {},
+            visa: parsed.visa || {},
+            visaEnv: parsed.visaEnv || "",
+            mastercard: parsed.mastercard || {},
+            mastercardDate: parsed.mastercardDate || "",
+            crossCheck: parsed.crossCheck || null,
+            fetchedDay: parsed.fetchedDay || "",
+          };
+        }
+      }
+    } catch {
+      /* ignore corrupted cache */
+    }
+
+    if (cached && Object.keys(cached.rates).length) {
+      setRates(cached.rates);
+      setUnionPay(cached.unionPay);
+      setGoogle(cached.google);
+      setSina(cached.sina);
+      setXe(cached.xe);
+      setAsOf(cached.date);
+      setUnionPayDate(cached.unionPayDate);
+      setUnionPayNote(cached.unionPayNote);
+      setSourceLabel(cached.source);
+      setRateSource(cached.rateSource);
+      setCrossCheck(cached.crossCheck);
+      setBackupRates(cached.backupRates || {});
+      setVisa(cached.visa || {});
+      setVisaEnv(cached.visaEnv || "");
+      setMastercard(cached.mastercard || {});
+      setMastercardDate(cached.mastercardDate || "");
+      setRefreshedDay(cached.fetchedDay);
+      setStatus("live");
+      // Only fetch when today's data is missing AND we are inside the scheduled
+      // 17:00-18:00 window. Outside the window the cached snapshot is served as
+      // is, so opening the page at 09:00 never triggers a fresh sweep.
+      if (cached.fetchedDay !== todayKey() && inRefreshWindow()) void refresh();
+      return;
+    }
+    void refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [enabled]);
+
+  // A page left open across the window still refreshes once.
+  useEffect(() => {
+    if (!enabled) return;
+    const timer = window.setInterval(() => {
+      if (refreshedDay !== todayKey() && inRefreshWindow()) void refresh();
+    }, 60_000);
+    return () => window.clearInterval(timer);
+  }, [enabled, refreshedDay, refresh]);
+
+  const get = useCallback(
+    (code: string) => {
+      const value = rates[code];
+      return typeof value === "number" && value > 0 ? value : null;
+    },
+    [rates],
+  );
+  const getVisa = useCallback(
+    (code: string) => {
+      const value = visa[code];
+      return typeof value === "number" && value > 0 ? value : null;
+    },
+    [visa],
+  );
+  const getMastercard = useCallback(
+    (code: string) => {
+      const value = mastercard[code];
+      return typeof value === "number" && value > 0 ? value : null;
+    },
+    [mastercard],
+  );
+  const getBackup = useCallback(
+    (code: string) => {
+      const value = backupRates[code];
+      return typeof value === "number" && value > 0 ? value : null;
+    },
+    [backupRates],
+  );
+  const getUnionPay = useCallback(
+    (code: string) => {
+      const value = unionPay[code];
+      return typeof value === "number" && value > 0 ? value : null;
+    },
+    [unionPay],
+  );
+  const pick = (map: Record<string, number>) => (code: string) => {
+    const value = map[code];
+    return typeof value === "number" && value > 0 ? value : null;
+  };
+  const getGoogle = useCallback(pick(google), [google]);
+  const getSina = useCallback(pick(sina), [sina]);
+  const getXe = useCallback(pick(xe), [xe]);
+  const hasAny = useCallback(
+    (code: string) => {
+      if (code === "USD") return true;
+      const value = rates[code];
+      return typeof value === "number" && value > 0;
+    },
+    [rates],
+  );
+  const best = useCallback(
+    (code: string, key: RateSortKey) => {
+      if (code === "USD") return 1;
+      if (key === "unionpay") return getUnionPay(code) ?? null;
+      if (key === "google") return getGoogle(code) ?? null;
+      if (key === "sina") return getSina(code) ?? null;
+      if (key === "xe") return getXe(code) ?? null;
+      if (key === "code") return null;
+      return get(code);
+    },
+    [get, getUnionPay, getGoogle, getSina, getXe],
+  );
+
+  const loadedCount = CURRENCIES.filter((currency) => hasAny(currency.code)).length;
+  const unionPayCount = CURRENCIES.filter((currency) => getUnionPay(currency.code) !== null).length;
+
+  return {
+    get,
+    getUnionPay,
+    getBackup,
+    getVisa,
+    getMastercard,
+    mastercardDate,
+    mastercardCount: Object.keys(mastercard).length,
+    visaEnv,
+    visaCount: Object.keys(visa).length,
+    getGoogle,
+    getSina,
+    getXe,
+    hasAny,
+    best,
+    refresh: () => refresh(true),
+    status,
+    asOf,
+    sourceLabel,
+    rateSource,
+    crossCheck,
+    refreshedDay,
+    loadedCount,
+    unionPayCount,
+    sourceProgress,
+    googleCount: Object.keys(google).length,
+    sinaCount: Object.keys(sina).length,
+    xeCount: Object.keys(xe).length,
+    unionPayDate,
+    unionPayNote,
+  };
+}
+
+function RateCell({ value, origin, highlight, muted, real }: { value?: number | null; origin?: string; highlight?: boolean; muted?: boolean; real?: boolean }) {
+  if (value === null || value === undefined || !Number.isFinite(value) || value <= 0) {
+    return <td className="whitespace-nowrap px-4 py-2.5 font-mono text-xs text-faint">—</td>;
+  }
+  return (
+    <td className="whitespace-nowrap px-4 py-2.5">
+      <span className={cn("font-mono text-sm", highlight ? "font-bold text-accent" : real ? "font-semibold text-text" : muted ? "text-muted" : "text-text")}>{formatRate(value)}</span>
+      {origin ? <span className="ml-1.5 text-[10px] text-faint">{origin}</span> : null}
+    </td>
+  );
+}
+
+function sortIndicator(active: RateSortKey, dir: "asc" | "desc", key: RateSortKey) {
+  if (key === "code" && dir === "asc") return "";
+  if (active !== key) return "";
+  return dir === "asc" ? "▲" : "▼";
+}
+
+function currencySymbolOf(code: string) {
+  return CURRENCY_BY_CODE[code]?.symbol ?? "";
+}
+
+function ExchangeRateTool({ settings }: { settings: Settings }) {
+  const live = useRateTable(!settings.privacyMode);
+  const [query, setQuery] = useState("");
+  const [page, setPage] = useState(0);
+  const [pageSize, setPageSize] = useState("25");
+  const [sortKey, setSortKey] = useState<RateSortKey>("code");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+  const [onlyLoaded, setOnlyLoaded] = useState(false);
+  const [amount, setAmount] = useState("100");
+  const [convertTo, setConvertTo] = useState("CNY");
+
+  const numericAmount = parseRateNumber(amount);
+
+  const filtered = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    let list = CURRENCIES.filter((currency) => {
+      if (!needle) return true;
+      return (
+        currency.code.toLowerCase().includes(needle) ||
+        currency.en.toLowerCase().includes(needle) ||
+        currency.zh.includes(needle)
+      );
+    });
+    if (onlyLoaded) {
+      list = list.filter((currency) => live.hasAny(currency.code));
+    }
+    const ranked = [...list].sort((a, b) => {
+      const aPop = POPULAR_CODES.indexOf(a.code);
+      const bPop = POPULAR_CODES.indexOf(b.code);
+      if (aPop !== -1 || bPop !== -1) {
+        if (aPop === -1) return 1;
+        if (bPop === -1) return -1;
+        return aPop - bPop;
+      }
+      return a.code.localeCompare(b.code);
+    });
+    return ranked;
+  }, [query, onlyLoaded, live]);
+
+  const sorted = useMemo(() => {
+    // `filtered` already ranks popular currencies first. Sorting by code or by a
+    // rate column should re-order everything, but popular rows stay pinned on
+    // top so the spotlight sources are visible without hunting through pages.
+    if (sortKey === "code" && sortDir === "asc" && !query.trim()) return filtered;
+    const rows = [...filtered];
+    const popularity = (code: string) => {
+      const index = POPULAR_CODES.indexOf(code);
+      return index === -1 ? Number.MAX_SAFE_INTEGER : index;
+    };
+    rows.sort((a, b) => {
+      const dir = sortDir === "asc" ? 1 : -1;
+      if (sortKey === "code") return a.code.localeCompare(b.code) * dir;
+      const av = live.best(a.code, sortKey);
+      const bv = live.best(b.code, sortKey);
+      if (av === null && bv === null) return popularity(a.code) - popularity(b.code) || a.code.localeCompare(b.code);
+      if (av === null) return 1;
+      if (bv === null) return -1;
+      return (av - bv) * dir;
+    });
+    return rows;
+  }, [filtered, sortKey, sortDir, live, query]);
+
+  const size = pageSize === "all" ? sorted.length || 1 : Number(pageSize);
+  const pageCount = Math.max(1, Math.ceil(sorted.length / size));
+  const safePage = Math.min(page, pageCount - 1);
+  const pageRows = sorted.slice(safePage * size, safePage * size + size);
+
+  const convertRate = live.best(convertTo, "google") ?? live.best(convertTo, "xe") ?? live.best(convertTo, "sina");
+  const converted = numericAmount && convertRate ? numericAmount * convertRate : 0;
+
+  const toggleSort = (key: RateSortKey) => {
+    if (sortKey === key) {
+      setSortDir((dir) => (dir === "asc" ? "desc" : "asc"));
+    } else {
+      setSortKey(key);
+      setSortDir("asc");
+    }
+    setPage(0);
+  };
+
+  return (
+    <div className="grid gap-4">
+      <Panel title="汇率表 Exchange Rate Table">
+        <div className="grid gap-4">
+          <div className={cn("rounded-2xl border px-4 py-3 text-sm", live.status === "live" && "border-emerald-400/40 bg-emerald-500/10 text-emerald-600 dark:text-emerald-300", live.status === "loading" && "border-line bg-panel text-muted", live.status === "blocked" && "border-amber-400/40 bg-amber-400/10 text-amber-700 dark:text-amber-300", live.status === "error" && "border-red-400/40 bg-red-500/10 text-red-600 dark:text-red-300")}>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="font-bold">
+                {live.status === "loading" && "正在获取每日汇率…"}
+                {live.status === "live" && `每日汇率 · ${live.loadedCount} / ${CURRENCIES.length} 个币种`}
+                {live.status === "blocked" && "隐私模式已开启，未发起外部请求"}
+                {live.status === "error" && "汇率获取失败，请检查网络后重试"}
+              </span>
+              <span className="font-mono text-[11px] text-faint">
+                {live.asOf ? `数据日期 ${live.asOf}` : ""}
+                {live.refreshedDay ? ` · 本地更新于 ${live.refreshedDay}` : ""}
+              </span>
+            </div>
+            <div className="mt-1 text-xs text-faint">
+              {live.sourceLabel ? `来源：${live.sourceLabel}` : ""}
+              {live.rateSource === "backup" ? " · 主源不可用，已切换备用源" : ""}
+              {live.crossCheck
+                ? ` · 交叉校验 ${live.crossCheck.compared} 个币种，中位偏差 ${live.crossCheck.medianDeviation.toFixed(2)}%`
+                : ""}
+              {" · "}
+              每天 {REFRESH_WINDOW_START}–{REFRESH_WINDOW_END} 之间自动更新一次
+              {live.sourceProgress
+                ? ` · 正在抓取 Google/新浪/XE ${live.sourceProgress.done}/${live.sourceProgress.total}`
+                : live.googleCount || live.sinaCount || live.xeCount
+                  ? ` · 已抓取 Google ${live.googleCount} / 新浪 ${live.sinaCount} / XE ${live.xeCount}`
+                  : ""}
+            </div>
+            {live.rateSource === "backup" ? (
+              <div className="mt-1 text-xs leading-5">主数据源（currency-api）本次无法访问，已自动切换到备用源。两者均为每日更新，可继续正常使用。</div>
+            ) : null}
+            {live.crossCheck && live.crossCheck.outliers.length ? (
+              <div className="mt-1 text-xs leading-5">
+                两个数据源在 {live.crossCheck.outliers.map((item) => item.code).join("、")} 上差异较大（最多 {live.crossCheck.maxDeviation.toFixed(0)}%），
+                通常是这些国家发生过币制改革或汇率重定，使用前建议单独核对。
+              </div>
+            ) : null}
+          </div>
+
+          <div className="grid grid-cols-[minmax(0,1fr)_auto_auto_auto] items-center gap-3 max-lg:grid-cols-2 max-sm:grid-cols-1">
+            <Input value={query} onChange={(event) => { setQuery(event.target.value); setPage(0); }} placeholder="搜索币种代码 / 英文名 / 中文名，如 CNY、人民币、Euro" />
+            <Select value={pageSize} onChange={(value) => { setPageSize(value); setPage(0); }} options={[{ value: "25", label: "25 / 页" }, { value: "50", label: "50 / 页" }, { value: "100", label: "100 / 页" }, { value: "all", label: "全部" }]} />
+            <label className="flex h-11 items-center gap-2 rounded-xl border border-line bg-surface/80 px-3 text-xs font-semibold text-muted">
+              <input type="checkbox" checked={onlyLoaded} onChange={(event) => { setOnlyLoaded(event.target.checked); setPage(0); }} />
+              仅显示已有数据
+            </label>
+          </div>
+
+          <div className="overflow-x-auto rounded-2xl border border-line">
+            <table className="w-full min-w-[1240px] border-collapse text-sm">
+              <thead>
+                <tr className="bg-surface/70 text-left">
+                  <th className="cursor-pointer whitespace-nowrap px-4 py-3 text-xs font-black uppercase tracking-wide text-muted" onClick={() => toggleSort("code")}>
+                    币种名称 {sortIndicator(sortKey, sortDir, "code")}
+                  </th>
+                  <th className="px-4 py-3 text-xs font-black uppercase tracking-wide text-muted">符号</th>
+                  <th className="cursor-pointer whitespace-nowrap px-4 py-3 text-xs font-black uppercase tracking-wide text-muted" title="银联官方每日清算汇率" onClick={() => toggleSort("unionpay")}>
+                    银联 {sortIndicator(sortKey, sortDir, "unionpay")}
+                  </th>
+                  <th className="cursor-pointer whitespace-nowrap px-4 py-3 text-xs font-black uppercase tracking-wide text-muted" title={live.mastercardCount > 0 ? `Mastercard 官方持卡人账单汇率（mastercard.com 公开接口，汇率日期 ${live.mastercardDate || "未知"}）` : "Mastercard 官方接口尚未返回数据"} onClick={() => toggleSort("mastercard")}>
+                    MASTERCARD {sortIndicator(sortKey, sortDir, "mastercard")}
+                  </th>
+                  <th className="cursor-pointer whitespace-nowrap px-4 py-3 text-xs font-black uppercase tracking-wide text-muted" title={live.visaEnv === "production" ? "Visa 官方外汇接口（生产环境，真实清算汇率）" : "Visa 官方外汇接口 · SANDBOX 沙箱模拟数据，仅供接口验证，不是真实汇率"} onClick={() => toggleSort("visa")}>
+                    VISA{" "}
+                    {live.visaEnv !== "production" ? (
+                      <span className="ml-1 rounded bg-amber-400/20 px-1 py-0.5 text-[9px] font-bold text-amber-600 dark:text-amber-300">SANDBOX</span>
+                    ) : null}
+                    {sortIndicator(sortKey, sortDir, "visa")}
+                  </th>
+                  <th className="cursor-pointer whitespace-nowrap px-4 py-3 text-xs font-black uppercase tracking-wide text-accent" onClick={() => toggleSort("google")}>
+                    平行市场 Google {sortIndicator(sortKey, sortDir, "google")}
+                  </th>
+                  <th className="cursor-pointer whitespace-nowrap px-4 py-3 text-xs font-black uppercase tracking-wide text-accent" onClick={() => toggleSort("sina")}>
+                    官方① 新浪 {sortIndicator(sortKey, sortDir, "sina")}
+                  </th>
+                  <th className="cursor-pointer whitespace-nowrap px-4 py-3 text-xs font-black uppercase tracking-wide text-accent" onClick={() => toggleSort("xe")}>
+                    官方② XE {sortIndicator(sortKey, sortDir, "xe")}
+                  </th>
+                  <th className="cursor-pointer whitespace-nowrap px-4 py-3 text-xs font-black uppercase tracking-wide text-muted" title="currency-api 每日快照（主数据源）" onClick={() => toggleSort("google")}>
+                    currency-api {sortIndicator(sortKey, sortDir, "code")}
+                  </th>
+                  <th className="cursor-pointer whitespace-nowrap px-4 py-3 text-xs font-black uppercase tracking-wide text-muted" title="ExchangeRate-API 开放接口（备用数据源，同时用于交叉校验）">
+                    ExchangeRate-API
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {pageRows.map((currency) => {
+                  return (
+                    <tr key={currency.code} className="border-t border-line transition hover:bg-accent/5">
+                      <td className="whitespace-nowrap px-4 py-2.5">
+                        <span className="mr-2">{flagEmoji(currency.flag)}</span>
+                        <span className="font-semibold text-text">{currency.zh}</span>
+                        <span className="ml-2 font-mono text-xs text-faint">{currency.code}</span>
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-2.5 text-muted">{currency.symbol}</td>
+                      <RateCell value={live.getUnionPay(currency.code)} real />
+                      <RateCell value={live.getMastercard(currency.code)} real />
+                      <RateCell value={live.getVisa(currency.code)} real />
+                      <RateCell value={live.getGoogle(currency.code)} highlight />
+                      <RateCell value={live.getSina(currency.code)} highlight />
+                      <RateCell value={live.getXe(currency.code)} highlight />
+                      <RateCell value={live.get(currency.code)} real />
+                      <RateCell value={live.getBackup(currency.code)} muted />
+                    </tr>
+                  );
+                })}
+                {!pageRows.length ? (
+                  <tr>
+                    <td colSpan={10} className="px-4 py-10 text-center text-sm text-muted">
+                      {settings.privacyMode ? "隐私模式下不加载汇率。关闭 Privacy First Mode 后刷新。" : "没有匹配的币种。"}
+                    </td>
+                  </tr>
+                ) : null}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <span className="text-xs text-muted">
+              共 {sorted.length} 个币种 · 第 {sorted.length ? safePage + 1 : 0} / {pageCount} 页
+            </span>
+            <div className="flex items-center gap-2">
+              <Button variant="default" onClick={() => setPage(0)} disabled={safePage === 0}>首页</Button>
+              <Button variant="default" onClick={() => setPage(Math.max(0, safePage - 1))} disabled={safePage === 0}>上一页</Button>
+              <Button variant="default" onClick={() => setPage(Math.min(pageCount - 1, safePage + 1))} disabled={safePage >= pageCount - 1}>下一页</Button>
+              <Button variant="default" onClick={() => setPage(pageCount - 1)} disabled={safePage >= pageCount - 1}>末页</Button>
+            </div>
+          </div>
+
+          <Notice>
+            汇率口径：<strong>1 美元 (USD) = X 本币</strong>，每天 {REFRESH_WINDOW_START}–{REFRESH_WINDOW_END} 之间自动更新一次。
+            列名即数据出处，各列独立抓取、互不替代：
+            <br />
+            <strong>currency-api</strong>：<a className="underline hover:text-accent" href="https://github.com/fawazahmed0/currency-api" target="_blank" rel="noreferrer noopener">fawazahmed0/currency-api</a>（经 jsDelivr CDN）每日快照，覆盖全部 154 种法币，为主数据源。
+            <br />
+            <strong>ExchangeRate-API</strong>：{" "}
+            <a className="underline hover:text-accent" href={RATE_ATTRIBUTION.href} target="_blank" rel="noreferrer noopener">
+              {RATE_ATTRIBUTION.label}
+            </a>{" "}
+            开放接口（无需 Key），每日更新；作为备用数据源，同时用于与主源交叉校验。主源不可用时自动切换。
+            <br />
+            <strong>平行市场 Google</strong>：Google Finance 报价页（USD-XXX 实时行情）。
+            <br />
+            <strong>官方① 新浪</strong>：新浪财经外汇接口 <code>hq.sinajs.cn</code>（在岸/离岸报价）。
+            <br />
+            <strong>官方② XE</strong>：<a className="underline hover:text-accent" href="https://www.xe.com/currencyconverter/" target="_blank" rel="noreferrer noopener">XE.com</a> 货币转换页中间价。
+            <br />
+            <strong>银联</strong>：银联国际公布的每日清算汇率（周一至周五更新，周末沿用周五汇率）。
+            <br />
+            <strong>VISA</strong>：{live.visaCount > 0
+              ? live.visaEnv === "production"
+                ? `Visa Developer Platform 官方外汇接口（生产环境），Visa 信用卡清算汇率，覆盖 ${live.visaCount} 个常用币种`
+                : `Visa Developer Platform 官方外汇接口 · SANDBOX 沙箱环境，覆盖 ${live.visaCount} 个常用币种。沙箱返回的是模拟数据，与真实市场汇率差距可达 40%，仅供接口连通性验证，不要用于实际换算`
+              : "Visa 官方接口暂未返回数据，该列显示为空（不再使用任何推算值）"}。Visa 官网本身有 Cloudflare 人机验证，无法直接抓取。
+            <br />
+            <strong>MASTERCARD</strong>：{live.mastercardCount > 0
+              ? `取自 mastercard.com 官网货币转换器的公开接口，是 Mastercard 公布的持卡人账单汇率，覆盖 ${live.mastercardCount} 个常用币种，汇率日期 ${live.mastercardDate || "未知"}`
+              : "Mastercard 接口暂未返回数据，该列显示为空（不再使用任何推算值）"}。该接口不需要 API Key，但无 CORS 头，经由本地转发服务读取。
+          </Notice>
+        </div>
+      </Panel>
+
+      <Panel title="美元换算 USD Converter">
+        <div className="grid gap-4">
+          <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-end gap-3 max-md:grid-cols-1">
+            <Field label="美元金额 (USD)">
+              <Input className="mono" inputMode="decimal" value={amount} onChange={(event) => setAmount(event.target.value)} placeholder="100" />
+            </Field>
+            <div className="grid h-11 place-items-center px-2 font-mono text-sm text-faint">=</div>
+            <Field label="目标币种">
+              <Select
+                value={convertTo}
+                onChange={setConvertTo}
+                options={CURRENCIES.map((item) => ({ value: item.code, label: `${item.code} · ${item.zh}`, hint: item.en }))}
+              />
+            </Field>
+          </div>
+          <Metric
+            label={`${formatAmount(numericAmount || 0)} USD`}
+            value={convertRate ? `${currencySymbolOf(convertTo)} ${formatAmount(converted)} ${convertTo}` : "—"}
+            hint={convertRate ? `1 USD = ${formatRate(convertRate)} ${convertTo}` : "该币种暂无可用汇率。"}
+          />
+        </div>
+      </Panel>
+    </div>
+  );
+}
+
+function parseRateNumber(input: string) {
+  const raw = input.trim().replace(/,/g, "");
+  if (!raw) return 0;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+}
+
+function formatRate(value: number) {
+  if (!Number.isFinite(value) || value <= 0) return "—";
+  if (value >= 1000) return value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  if (value >= 1) return value.toFixed(4);
+  return value.toFixed(6);
+}
+
+function formatAmount(value: number) {
+  if (!Number.isFinite(value) || value <= 0) return "0";
+  if (value >= 1000) return value.toLocaleString("en-US", { maximumFractionDigits: 2 });
+  if (value >= 1) return value.toFixed(2);
+  return value.toPrecision(6).replace(/0+$/, "");
+}
+
+
