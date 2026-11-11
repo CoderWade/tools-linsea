@@ -1,10 +1,10 @@
 [Unit]
-Description=Daily exchange-rate snapshot for tools.timeminer.cc (17:00)
+Description=Daily exchange-rate snapshot for tools.timeminer.cc (17:00 Asia/Shanghai)
 
 [Timer]
-# Fire once per day inside the configured refresh window. Persistent=true means a
-# missed run (server down at 17:00) still executes after the next boot.
-OnCalendar=*-*-* 17:00:00
+# The host runs on Europe/Berlin, but the refresh window is defined in Beijing
+# time, so the schedule pins the zone explicitly instead of using the host clock.
+OnCalendar=*-*-* 17:00:00 Asia/Shanghai
 Persistent=true
 RandomizedDelaySec=5m
 Unit=timeminer-tools-snapshot.service
