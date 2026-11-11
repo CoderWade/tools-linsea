@@ -1,0 +1,55 @@
+# Docker Compose for tools.timeminer.cc
+#
+# Runs the static frontend and the four exchange-rate relays in one container.
+# nginx on the host terminates TLS and routes:
+#   /            -> 127.0.0.1:8100  (served bundle)
+#   /api/unionpay  -> 127.0.0.1:8788
+#   /api/sources   -> 127.0.0.1:8789
+#   /api/visa      -> 127.0.0.1:8790
+#   /api/mastercard-> 127.0.0.1:8791
+#
+# Visa credentials come from .env (never committed). Without them the Visa relay
+# starts in "unconfigured" mode and the column renders empty rather than wrong.
+
+services:
+  tools:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: timeminer-tools:latest
+    container_name: timeminer-tools
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8100:8100"
+      - "127.0.0.1:8788:8788"
+      - "127.0.0.1:8789:8789"
+      - "127.0.0.1:8790:8790"
+      - "127.0.0.1:8791:8791"
+    environment:
+      # Keep relay ports in sync with the CMD in the Dockerfile.
+      UNIONPAY_PROXY_PORT: "8788"
+      SOURCE_PROXY_PORT: "8789"
+      VISA_PROXY_PORT: "8790"
+      MC_PROXY_PORT: "8791"
+      # Visa Developer / two-way SSL (optional).
+      VISA_ENV: "${VISA_ENV:-sandbox}"
+      VISA_API_KEY: "${VISA_API_KEY:-}"
+      VISA_SHARED_SECRET: "${VISA_SHARED_SECRET:-}"
+      VISA_USER_ID: "${VISA_USER_ID:-}"
+      VISA_PASSWORD: "${VISA_PASSWORD:-}"
+      # Outbound proxy for the scraper relays, when the host needs one.
+      HTTPS_PROXY: "${HTTPS_PROXY:-}"
+    volumes:
+      # Mounted read-only: the relay only reads the certificates.
+      - ./.visa-keys:/app/.visa-keys:ro
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8788/api/unionpay/health"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

@@ -1,0 +1,19 @@
+# Never bake credentials or heavy local state into the image.
+.visa-keys/
+*.pem
+.env
+.env.*
+!.env.example
+
+node_modules/
+dist/
+.git/
+.github/
+tsconfig.tsbuildinfo
+
+# Docs and local scratch files.
+*.md
+!README.md
+_*.mjs
+_*.json
+_*.log
