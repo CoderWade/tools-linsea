@@ -26,6 +26,8 @@ services:
       - "127.0.0.1:8790:8790"
       - "127.0.0.1:8791:8791"
     environment:
+      # Containers must bind 0.0.0.0 so Docker can forward the port to the host.
+      RELAY_HOST: "0.0.0.0"
       # Keep relay ports in sync with the CMD in the Dockerfile.
       UNIONPAY_PROXY_PORT: "8788"
       SOURCE_PROXY_PORT: "8789"
@@ -37,6 +39,10 @@ services:
       VISA_SHARED_SECRET: "${VISA_SHARED_SECRET:-}"
       VISA_USER_ID: "${VISA_USER_ID:-}"
       VISA_PASSWORD: "${VISA_PASSWORD:-}"
+      # Certificate paths inside the container (see the read-only mount below).
+      VISA_CERT_PATH: "/app/.visa-keys/cert.pem"
+      VISA_KEY_PATH: "/app/.visa-keys/private_key.pem"
+      VISA_CA_PATH: "/app/.visa-keys/ca_bundle.pem"
       # Outbound proxy for the scraper relays, when the host needs one.
       HTTPS_PROXY: "${HTTPS_PROXY:-}"
     volumes:

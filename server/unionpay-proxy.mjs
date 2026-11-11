@@ -106,6 +106,6 @@ const server = http.createServer(async (req, res) => {
   json(res, 404, { ok: false, error: "not found" });
 });
 
-server.listen(PORT, "127.0.0.1", () => {
+server.listen(PORT, process.env.RELAY_HOST || "127.0.0.1", () => {
   console.log(`[unionpay-relay] listening on http://127.0.0.1:${PORT}`);
 });
