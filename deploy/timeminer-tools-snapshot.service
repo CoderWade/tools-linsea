@@ -1,0 +1,16 @@
+[Unit]
+Description=Timeminer Tools daily exchange-rate snapshot
+Documentation=https://github.com/CoderWade/tools-linsea
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+# Kick the sweep from inside the running container so it uses the same relays,
+# certificates and network namespace as the served application.
+# The endpoint returns 202 immediately; the sweep continues in the background.
+ExecStart=/usr/bin/docker exec timeminer-tools sh -c "wget -qO- --timeout=30 'http://127.0.0.1:8792/api/snapshot/refresh' >/dev/null || curl -sf 'http://127.0.0.1:8792/api/snapshot/refresh' >/dev/null"
+TimeoutStartSec=120
+
+# Give the service a minimal environment.
+Environment=PATH=/usr/local/bin:/usr/bin:/bin

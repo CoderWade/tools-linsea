@@ -1,0 +1,13 @@
+[Unit]
+Description=Daily exchange-rate snapshot for tools.timeminer.cc (17:00)
+
+[Timer]
+# Fire once per day inside the configured refresh window. Persistent=true means a
+# missed run (server down at 17:00) still executes after the next boot.
+OnCalendar=*-*-* 17:00:00
+Persistent=true
+RandomizedDelaySec=5m
+Unit=timeminer-tools-snapshot.service
+
+[Install]
+WantedBy=timers.target

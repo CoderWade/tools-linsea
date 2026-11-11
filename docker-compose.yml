@@ -25,6 +25,7 @@ services:
       - "127.0.0.1:8789:8789"
       - "127.0.0.1:8790:8790"
       - "127.0.0.1:8791:8791"
+      - "127.0.0.1:8792:8792"
     environment:
       # Containers must bind 0.0.0.0 so Docker can forward the port to the host.
       RELAY_HOST: "0.0.0.0"
@@ -43,11 +44,18 @@ services:
       VISA_CERT_PATH: "/app/.visa-keys/cert.pem"
       VISA_KEY_PATH: "/app/.visa-keys/private_key.pem"
       VISA_CA_PATH: "/app/.visa-keys/ca_bundle.pem"
+      # Daily snapshot service (systemd timer triggers /api/snapshot/refresh).
+      SNAPSHOT_PORT: "8792"
+      SNAPSHOT_DIR: "/app/data"
+      SNAPSHOT_KEEP_DAYS: "14"
+      SNAPSHOT_TOKEN: "${SNAPSHOT_TOKEN:-}"
       # Outbound proxy for the scraper relays, when the host needs one.
       HTTPS_PROXY: "${HTTPS_PROXY:-}"
     volumes:
       # Mounted read-only: the relay only reads the certificates.
       - ./.visa-keys:/app/.visa-keys:ro
+      # Snapshots persist across rebuilds.
+      - snapshot-data:/app/data
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8788/api/unionpay/health"]
       interval: 60s
@@ -59,3 +67,6 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+
+volumes:
+  snapshot-data:

@@ -3039,6 +3039,53 @@ function useRateTable(enabled: boolean) {
     [enabled, rates],
   );
 
+  /**
+   * Load the server-side daily snapshot. Returns true when it replaced the
+   * local cache, so the caller knows whether a live sweep is still needed.
+   */
+  const loadServerSnapshot = useCallback(async () => {
+    try {
+      const response = await fetch("/api/snapshot");
+      if (!response.ok) return false;
+      const snap = (await response.json()) as {
+        ok?: boolean;
+        generatedAt?: string;
+        unionPay?: Record<string, number>;
+        unionPayDate?: string;
+        unionPayNote?: string;
+        google?: Record<string, number>;
+        sina?: Record<string, number>;
+        xe?: Record<string, number>;
+        visa?: Record<string, number>;
+        visaEnv?: string;
+        mastercard?: Record<string, number>;
+        mastercardDate?: string;
+      };
+      if (!snap.ok) return false;
+
+      // The reference columns still come from currency-api; the snapshot only
+      // carries the relays, so merge instead of replacing wholesale.
+      setUnionPay(snap.unionPay || {});
+      setUnionPayDate(snap.unionPayDate || "");
+      setUnionPayNote(snap.unionPayNote || "");
+      setGoogle(snap.google || {});
+      setSina(snap.sina || {});
+      setXe(snap.xe || {});
+      setVisa(snap.visa || {});
+      setVisaEnv(snap.visaEnv || "");
+      setMastercard(snap.mastercard || {});
+      setMastercardDate(snap.mastercardDate || "");
+
+      const day = (snap.generatedAt || "").slice(0, 10) || todayKey();
+      setRefreshedDay(day);
+      setStatus("live");
+      return true;
+    } catch {
+      return false;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   useEffect(() => {
     if (!enabled) {
       setStatus("blocked");
@@ -3094,13 +3141,17 @@ function useRateTable(enabled: boolean) {
       setMastercardDate(cached.mastercardDate || "");
       setRefreshedDay(cached.fetchedDay);
       setStatus("live");
-      // Only fetch when today's data is missing AND we are inside the scheduled
-      // 17:00-18:00 window. Outside the window the cached snapshot is served as
-      // is, so opening the page at 09:00 never triggers a fresh sweep.
-      if (cached.fetchedDay !== todayKey() && inRefreshWindow()) void refresh();
+      // Serve the cached snapshot immediately, then top up from the server-side
+      // snapshot if it is newer. A browser never starts a full sweep on its own.
+      void loadServerSnapshot().then((applied) => {
+        if (!applied && cached.fetchedDay !== todayKey() && inRefreshWindow()) void refresh();
+      });
       return;
     }
-    void refresh();
+    // First visit on this browser: use the server snapshot if one exists.
+    void loadServerSnapshot().then((applied) => {
+      if (!applied) void refresh();
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enabled]);
 

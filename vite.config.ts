@@ -8,12 +8,14 @@ const UNIONPAY_TARGET = process.env.UNIONPAY_PROXY_TARGET || "http://127.0.0.1:8
 const SOURCE_TARGET = process.env.SOURCE_PROXY_TARGET || "http://127.0.0.1:8789";
 const VISA_TARGET = process.env.VISA_PROXY_TARGET || "http://127.0.0.1:8790";
 const MASTERCARD_TARGET = process.env.MC_PROXY_TARGET || "http://127.0.0.1:8791";
+const SNAPSHOT_TARGET = process.env.SNAPSHOT_PROXY_TARGET || "http://127.0.0.1:8792";
 
 const relay = {
   "/api/unionpay": { target: UNIONPAY_TARGET, changeOrigin: true },
   "/api/sources": { target: SOURCE_TARGET, changeOrigin: true },
   "/api/visa": { target: VISA_TARGET, changeOrigin: true },
   "/api/mastercard": { target: MASTERCARD_TARGET, changeOrigin: true },
+  "/api/snapshot": { target: SNAPSHOT_TARGET, changeOrigin: true },
 };
 
 export default defineConfig({

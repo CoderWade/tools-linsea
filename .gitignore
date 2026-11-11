@@ -9,3 +9,6 @@ tsconfig.tsbuildinfo
 # Visa Developer credentials and generated keys (never commit)
 .visa-keys/
 *.pem
+
+# Snapshot output (generated at runtime, mounted as a docker volume in production)
+data/
