@@ -136,15 +136,55 @@ async function fetchText(url, extraHeaders = {}, timeoutMs = 20_000) {
       status = result.status;
       body = result.body;
     } else {
-      const response = await fetch(url, { headers, signal: controller.signal });
-      status = response.status;
-      body = await response.text();
+      try {
+        const response = await fetch(url, { headers, signal: controller.signal });
+        status = response.status;
+        body = await response.text();
+      } catch (error) {
+        // Hosts like hq.sinajs.cn resolve to both A and AAAA records. Node prefers
+        // IPv6, but many containers have no IPv6 egress, so the request dies with
+        // a bare "fetch failed" even though IPv4 works. Retry over IPv4 only.
+        const retry = await fetchOverIpv4(url, headers, controller.signal);
+        status = retry.status;
+        body = retry.body;
+      }
     }
     if (status >= 400) throw new Error(`HTTP ${status} from ${new URL(url).host}`);
     return body;
   } finally {
     clearTimeout(timer);
   }
+}
+
+/** One GET over IPv4 only, used when the default fetch fails to connect. */
+async function fetchOverIpv4(url, headers, signal) {
+  const httpModule = await import("node:http");
+  const httpsModule = await import("node:https");
+  const target = new URL(url);
+  const transport = target.protocol === "http:" ? httpModule.default : httpsModule.default;
+
+  return await new Promise((resolve, reject) => {
+    const req = transport.request(
+      {
+        hostname: target.hostname,
+        port: target.port || (target.protocol === "http:" ? 80 : 443),
+        path: target.pathname + target.search,
+        method: "GET",
+        headers,
+        family: 4,
+        signal,
+      },
+      (res) => {
+        const chunks = [];
+        res.on("data", (chunk) => chunks.push(chunk));
+        res.on("end", () => resolve({ status: res.statusCode || 0, body: Buffer.concat(chunks).toString("utf8") }));
+        res.on("error", reject);
+      },
+    );
+    req.on("error", reject);
+    req.setTimeout(20_000, () => req.destroy(new Error("IPv4 request timed out")));
+    req.end();
+  });
 }
 
 // --- Sina: batched -----------------------------------------------------------
